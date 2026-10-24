@@ -24,12 +24,7 @@ pys3rds 没有实例，两次请求之间什么都不在运行。Lambda 在永�
 
 ## 怎么工作
 
-```
-浏览器(web 控制台) ──────────────┐
-你的 Lambda / ECS / EC2 / 笔记本 ─┼── HTTPS ──→  db lambda  ──→  s3://<bucket>/db/<库名>.sqlite
-   (pys3mysql 驱动)              ┘  Basic auth   (唯一碰 S3      (一个文件 = 一个库)
-                                                 的进程)
-```
+![pys3rds 架构](docs/architecture.svg)
 
 - **一个库 = S3 上一个 `.sqlite` 文件。** db lambda 把它拉到 `/tmp`、执行 SQL，**只有数据真的变了**才整文件回传
   （SQLite authorizer + 文件指纹双重判定）。

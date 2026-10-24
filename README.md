@@ -24,13 +24,7 @@ free tier (1M requests + 400k GB-s per month); beyond that it is $0.20 per milli
 
 ## How it works
 
-```
-browser (web console) ───────────┐
-your Lambda / ECS / EC2 / laptop ─┼── HTTPS ──→  db lambda  ──→  s3://<bucket>/db/<name>.sqlite
-   (pys3mysql driver)            ┘   Basic auth   (the only      (one file = one database)
-                                                 process that
-                                                 touches S3)
-```
+![pys3rds architecture](docs/architecture.svg)
 
 - **One database = one `.sqlite` file on S3.** The db lambda downloads it to `/tmp`, runs your SQL, and
   uploads the whole file back only if the data actually changed (SQLite's authorizer + a file fingerprint decide).
