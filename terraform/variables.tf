@@ -47,6 +47,30 @@ variable "db_password" {
   sensitive   = true
 }
 
+# ---- endpoint 的门 ----
+variable "endpoint_auth" {
+  description = <<-EOT
+    How the database endpoint (db / db-ro Function URLs) is protected:
+      NONE    = public URL; only user/password (HTTP Basic) is checked      <- default
+      AWS_IAM = AWS checks a SigV4 signature + IAM permission first, then user/password.
+                Nobody without AWS credentials even reaches the lambda. The browser
+                console cannot sign requests, so it is unusable in this mode.
+  EOT
+  type        = string
+  default     = "NONE"
+
+  validation {
+    condition     = contains(["NONE", "AWS_IAM"], var.endpoint_auth)
+    error_message = "endpoint_auth must be NONE or AWS_IAM."
+  }
+}
+
+variable "console" {
+  description = "Serve the built-in web console at GET / on the db endpoints. false = API only."
+  type        = bool
+  default     = true
+}
+
 # ---- demo 业务 API 自己的门(x-auth-token 头),与数据库凭证无关 ----
 variable "auth_token" {
   description = "Shared secret for the demo service's own API gate"

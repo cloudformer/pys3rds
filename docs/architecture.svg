@@ -1,107 +1,143 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 480" width="1000" height="480"
-     font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#232F3E">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 560" width="1100" height="560"
+     font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
   <defs>
-    <linearGradient id="gLambda" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#F7981D"/><stop offset="1" stop-color="#D45B07"/>
+    <linearGradient id="gCompute" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#F58534"/><stop offset="1" stop-color="#C7511F"/>
     </linearGradient>
-    <linearGradient id="gS3" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#7AA116"/><stop offset="1" stop-color="#3F8624"/>
+    <linearGradient id="gStorage" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6CAE3E"/><stop offset="1" stop-color="#3F8624"/>
     </linearGradient>
-    <linearGradient id="gUI" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="gConsole" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#8C4FFF"/><stop offset="1" stop-color="#5B3BC8"/>
     </linearGradient>
-    <linearGradient id="gClient" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#4B5B73"/><stop offset="1" stop-color="#232F3E"/>
-    </linearGradient>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
-      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#0F172A" flood-opacity="0.18"/>
-    </filter>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+      <path d="M0,0 L10,5 L0,10 z" fill="#CBD5E1"/>
     </marker>
     <style>
-      .title { font-size: 16px; font-weight: 700; }
-      .sub   { font-size: 11.5px; fill: #64748B; }
-      .label { font-size: 13px; font-weight: 600; }
-      .note  { font-size: 11px; fill: #475569; }
-      .edge  { fill: none; stroke: #334155; stroke-width: 1.8; }
+      .group  { fill: none; stroke: #94A3B8; stroke-width: 1.3; }
+      .gtitle { font-size: 15px; font-weight: 600; fill: #CBD5E1; }
+      .label  { font-size: 12.5px; font-weight: 600; fill: #F1F5F9; }
+      .sub    { font-size: 11px; fill: #94A3B8; }
+      .edge   { fill: none; stroke: #CBD5E1; stroke-width: 1.8; }
+      .callout      { fill: #F2443B; }
+      .callout-text { font-size: 12.5px; font-weight: 600; fill: #FFFFFF; }
+      .step   { font-size: 11.5px; fill: #E2E8F0; }
+      .glyph  { fill: none; stroke: #FFFFFF; stroke-width: 2.6; stroke-linejoin: round; stroke-linecap: round; }
     </style>
   </defs>
 
-  <rect width="1000" height="480" rx="18" fill="#F8FAFC"/>
+  <rect width="1100" height="560" rx="18" fill="#0F172A"/>
 
-  <!-- ============ the RDS box ============ -->
-  <rect x="330" y="34" width="640" height="412" rx="14" fill="#FFFFFF" stroke="#CBD5E1" stroke-width="1.5" filter="url(#shadow)"/>
-  <text x="650" y="64" text-anchor="middle" class="title">pys3rds — your RDS</text>
-  <text x="650" y="82" text-anchor="middle" class="sub">a Lambda URL as the endpoint · SQLite files on S3 · ≈ $0 when idle</text>
+  <!-- ====================== Compute ====================== -->
+  <rect x="40" y="56" width="260" height="330" rx="10" class="group" stroke-dasharray="6 5"/>
+  <text x="170" y="84" text-anchor="middle" class="gtitle">Compute</text>
 
-  <!-- Web console -->
-  <g transform="translate(400,110)">
-    <rect width="96" height="96" rx="12" fill="url(#gUI)" filter="url(#shadow)"/>
-    <rect x="14" y="18" width="68" height="8" rx="2" fill="#FFFFFF" opacity="0.95"/>
-    <rect x="14" y="32" width="68" height="46" rx="3" fill="#FFFFFF" opacity="0.22"/>
-    <rect x="20" y="38" width="56" height="5" rx="2" fill="#FFFFFF"/>
-    <rect x="20" y="48" width="56" height="5" rx="2" fill="#FFFFFF" opacity="0.7"/>
-    <rect x="20" y="58" width="56" height="5" rx="2" fill="#FFFFFF" opacity="0.7"/>
-    <rect x="20" y="68" width="34" height="5" rx="2" fill="#FFFFFF" opacity="0.7"/>
-    <text x="48" y="118" text-anchor="middle" class="label">Web console</text>
-    <text x="48" y="134" text-anchor="middle" class="sub">databases · tables · rows · SQL</text>
+  <!-- EC2 -->
+  <g transform="translate(78,108)">
+    <rect width="70" height="70" rx="9" fill="url(#gCompute)"/>
+    <rect x="20" y="20" width="30" height="30" rx="3" class="glyph"/>
+    <path d="M27 20v-7 M35 20v-7 M43 20v-7 M27 50v7 M35 50v7 M43 50v7 M20 27h-7 M20 35h-7 M20 43h-7 M50 27h7 M50 35h7 M50 43h7" class="glyph" stroke-width="2"/>
+    <text x="35" y="90" text-anchor="middle" class="label">EC2</text>
+  </g>
+  <!-- ECS -->
+  <g transform="translate(192,108)">
+    <rect width="70" height="70" rx="9" fill="url(#gCompute)"/>
+    <path d="M35 12 L55 23.5 V46.5 L35 58 L15 46.5 V23.5 Z" class="glyph"/>
+    <rect x="26" y="29" width="8" height="8" fill="#FFFFFF"/><rect x="36" y="29" width="8" height="8" fill="#FFFFFF"/>
+    <rect x="26" y="39" width="8" height="8" fill="#FFFFFF"/><rect x="36" y="39" width="8" height="8" fill="#FFFFFF"/>
+    <text x="35" y="90" text-anchor="middle" class="label">ECS</text>
+  </g>
+  <!-- EKS -->
+  <g transform="translate(78,226)">
+    <rect width="70" height="70" rx="9" fill="url(#gCompute)"/>
+    <path d="M35 12 L55 23.5 V46.5 L35 58 L15 46.5 V23.5 Z" class="glyph"/>
+    <circle cx="35" cy="35" r="9" class="glyph"/>
+    <path d="M35 26v-6 M35 44v6 M26 35h-6 M44 35h6" class="glyph" stroke-width="2"/>
+    <text x="35" y="90" text-anchor="middle" class="label">EKS</text>
+  </g>
+  <!-- Lambda -->
+  <g transform="translate(192,226)">
+    <rect width="70" height="70" rx="9" fill="url(#gCompute)"/>
+    <text x="35" y="50" text-anchor="middle" font-size="40" font-weight="700" fill="#FFFFFF">λ</text>
+    <text x="35" y="90" text-anchor="middle" class="label">Lambda</text>
   </g>
 
-  <!-- Endpoint -->
-  <g transform="translate(400,300)">
-    <rect width="96" height="96" rx="12" fill="url(#gLambda)" filter="url(#shadow)"/>
-    <text x="48" y="68" text-anchor="middle" font-size="56" font-weight="700" fill="#FFFFFF">λ</text>
-    <text x="48" y="118" text-anchor="middle" class="label">Endpoint</text>
-    <text x="48" y="134" text-anchor="middle" class="sub">Lambda URL · SQL engine · user / password</text>
+  <text x="170" y="350" text-anchor="middle" class="sub">your code, anywhere it runs</text>
+  <text x="170" y="368" text-anchor="middle" class="sub"><tspan text-decoration="line-through" fill="#64748B">import pymysql</tspan>  →  <tspan fill="#F1F5F9" font-weight="600">import pys3mysql</tspan></text>
+
+  <!-- compute -> endpoint -->
+  <path d="M300 220 L 418 220" class="edge" marker-end="url(#arrow)"/>
+  <rect x="304" y="186" width="110" height="24" rx="5" class="callout"/>
+  <text x="359" y="203" text-anchor="middle" class="callout-text">1  HTTPS · pys3rds</text>
+
+  <!-- browser (outside) -->
+  <g transform="translate(135,430)">
+    <rect width="70" height="52" rx="7" fill="#334155"/>
+    <rect x="6" y="6" width="58" height="8" rx="2" fill="#CBD5E1"/>
+    <circle cx="11" cy="10" r="2" fill="#F87171"/><circle cx="17" cy="10" r="2" fill="#FBBF24"/><circle cx="23" cy="10" r="2" fill="#34D399"/>
+    <rect x="6" y="18" width="58" height="28" rx="2" fill="#E2E8F0"/>
+    <rect x="11" y="23" width="26" height="4" rx="1.5" fill="#94A3B8"/><rect x="11" y="31" width="48" height="4" rx="1.5" fill="#CBD5E1"/><rect x="11" y="39" width="36" height="4" rx="1.5" fill="#CBD5E1"/>
+    <text x="35" y="70" text-anchor="middle" class="label">Browser</text>
+  </g>
+  <path d="M205 456 L 418 456" class="edge" marker-end="url(#arrow)"/>
+
+  <!-- ====================== s3rds ====================== -->
+  <rect x="360" y="40" width="700" height="490" rx="12" class="group" stroke="#CBD5E1" stroke-width="1.6"/>
+  <text x="380" y="70" class="gtitle" font-size="18" fill="#F8FAFC">s3rds: a serverless RDS</text>
+  <text x="380" y="88" class="sub">Lambda URL as the endpoint · SQLite on S3 · ≈ $0 when idle</text>
+
+  <!-- Backend -->
+  <rect x="400" y="110" width="400" height="230" rx="9" class="group"/>
+  <text x="600" y="134" text-anchor="middle" class="gtitle" font-size="13">Backend</text>
+
+  <g transform="translate(430,160)">
+    <rect width="86" height="86" rx="10" fill="url(#gCompute)"/>
+    <text x="43" y="62" text-anchor="middle" font-size="50" font-weight="700" fill="#FFFFFF">λ</text>
+    <text x="43" y="108" text-anchor="middle" class="label">Lambda: Endpoint</text>
+    <text x="43" y="124" text-anchor="middle" class="sub">user / password · SQL engine</text>
   </g>
 
-  <!-- S3 -->
-  <g transform="translate(830,205)">
-    <rect width="96" height="96" rx="12" fill="url(#gS3)" filter="url(#shadow)"/>
-    <path d="M24 28 q24 -11 48 0 v38 q-24 13 -48 0 z" fill="none" stroke="#FFFFFF" stroke-width="3.5" stroke-linejoin="round"/>
-    <ellipse cx="48" cy="28" rx="24" ry="6.5" fill="none" stroke="#FFFFFF" stroke-width="3.5"/>
-    <text x="48" y="118" text-anchor="middle" class="label">S3</text>
-    <text x="48" y="134" text-anchor="middle" class="sub">db/blog.sqlite · db/shop.sqlite · …</text>
-    <text x="48" y="148" text-anchor="middle" class="sub">one file = one database</text>
+  <g transform="translate(540,160)">
+    <rect width="22" height="22" rx="4" class="callout"/><text x="11" y="16" text-anchor="middle" class="callout-text">2</text>
+    <text x="30" y="16" class="step">fetch .sqlite to /tmp (ETag cache)</text>
+    <rect y="44" width="22" height="22" rx="4" class="callout"/><text x="11" y="60" text-anchor="middle" class="callout-text">3</text>
+    <text x="30" y="60" class="step">run SQL in a transaction</text>
+    <rect y="88" width="22" height="22" rx="4" class="callout"/><text x="11" y="104" text-anchor="middle" class="callout-text">4</text>
+    <text x="30" y="104" class="step">upload only if changed</text>
+    <text x="30" y="120" class="step">If-Match CAS · never a duplicate write</text>
   </g>
 
-  <!-- console -> endpoint -->
-  <path d="M448 208 L 448 298" class="edge" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
-  <text x="458" y="258" class="note">same HTTP API</text>
-
-  <!-- endpoint <-> S3 -->
-  <path d="M496 336 C 660 336, 680 253, 828 253" class="edge" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
-  <text x="662" y="286" text-anchor="middle" class="note">read: GET only when the ETag changed (/tmp cache)</text>
-  <text x="662" y="301" text-anchor="middle" class="note">write: PUT with If-Match, only when data changed</text>
-
-  <text x="650" y="430" text-anchor="middle" class="sub">explicit transactions (DDL included) · STRICT tables · foreign keys on · single writer · nothing runs between requests</text>
-
-  <!-- ============ outside: browser ============ -->
-  <g transform="translate(70,96)">
-    <rect width="120" height="84" rx="10" fill="url(#gClient)" filter="url(#shadow)"/>
-    <rect x="10" y="12" width="100" height="12" rx="3" fill="#CBD5E1"/>
-    <circle cx="17" cy="18" r="2.6" fill="#F87171"/><circle cx="25" cy="18" r="2.6" fill="#FBBF24"/><circle cx="33" cy="18" r="2.6" fill="#34D399"/>
-    <rect x="10" y="30" width="100" height="44" rx="3" fill="#E2E8F0"/>
-    <rect x="16" y="37" width="44" height="5" rx="2" fill="#94A3B8"/>
-    <rect x="16" y="47" width="86" height="5" rx="2" fill="#CBD5E1"/>
-    <rect x="16" y="57" width="66" height="5" rx="2" fill="#CBD5E1"/>
-    <text x="60" y="108" text-anchor="middle" class="label">Browser</text>
-    <text x="60" y="124" text-anchor="middle" class="sub">you, looking at the data</text>
+  <!-- Storage -->
+  <rect x="830" y="110" width="200" height="230" rx="9" class="group"/>
+  <text x="930" y="134" text-anchor="middle" class="gtitle" font-size="13">Storage</text>
+  <g transform="translate(887,160)">
+    <rect width="86" height="86" rx="10" fill="url(#gStorage)"/>
+    <path d="M22 26 q21 -10 42 0 v34 q-21 12 -42 0 z" class="glyph" stroke-width="3.2"/>
+    <ellipse cx="43" cy="26" rx="21" ry="6" class="glyph" stroke-width="3.2"/>
+    <text x="43" y="108" text-anchor="middle" class="label">S3: Storage</text>
+    <text x="43" y="124" text-anchor="middle" class="sub">db/blog.sqlite</text>
+    <text x="43" y="138" text-anchor="middle" class="sub">db/shop.sqlite · …</text>
+    <text x="43" y="154" text-anchor="middle" class="sub">one file = one database</text>
   </g>
-  <path d="M190 138 L 398 158" class="edge" marker-end="url(#arrow)"/>
-  <text x="292" y="136" text-anchor="middle" class="note">HTTPS</text>
+  <path d="M800 203 L 885 203" class="edge" marker-end="url(#arrow)" marker-start="url(#arrow)"/>
 
-  <!-- ============ outside: your application ============ -->
-  <g transform="translate(70,290)">
-    <rect width="120" height="84" rx="10" fill="url(#gClient)" filter="url(#shadow)"/>
-    <text x="60" y="34" text-anchor="middle" font-size="11.5" fill="#94A3B8" text-decoration="line-through">import pymysql</text>
-    <text x="60" y="56" text-anchor="middle" font-size="13" font-weight="700" fill="#FFFFFF">import pys3mysql</text>
-    <text x="60" y="108" text-anchor="middle" class="label">Your application</text>
-    <text x="60" y="124" text-anchor="middle" class="sub">EC2 · Lambda · ECS · laptop</text>
-    <text x="60" y="139" text-anchor="middle" class="sub">the only change is one import line</text>
+  <!-- Web console (built-in) -->
+  <g transform="translate(430,392)">
+    <rect width="86" height="86" rx="10" fill="url(#gConsole)"/>
+    <rect x="13" y="16" width="60" height="8" rx="2" fill="#FFFFFF" opacity="0.95"/>
+    <rect x="13" y="29" width="60" height="42" rx="3" fill="#FFFFFF" opacity="0.22"/>
+    <rect x="18" y="35" width="50" height="4.5" rx="2" fill="#FFFFFF"/>
+    <rect x="18" y="44" width="50" height="4.5" rx="2" fill="#FFFFFF" opacity="0.7"/>
+    <rect x="18" y="53" width="50" height="4.5" rx="2" fill="#FFFFFF" opacity="0.7"/>
+    <rect x="18" y="62" width="30" height="4.5" rx="2" fill="#FFFFFF" opacity="0.7"/>
+    <text x="43" y="108" text-anchor="middle" class="label">Lambda: Web console</text>
   </g>
-  <path d="M190 332 L 398 346" class="edge" marker-end="url(#arrow)"/>
-  <text x="292" y="326" text-anchor="middle" class="note">HTTPS · user / password</text>
-  <text x="292" y="366" text-anchor="middle" class="note">exactly like connecting to RDS</text>
+  <path d="M473 390 L 473 346" class="edge" stroke-dasharray="5 4" marker-end="url(#arrow)"/>
+  <text x="482" y="372" class="sub">same HTTP API</text>
+
+  <rect x="540" y="412" width="22" height="22" rx="4" class="callout"/><text x="551" y="428" text-anchor="middle" class="callout-text">5</text>
+  <text x="570" y="428" class="step">built-in console: browse databases and tables, edit rows, run SQL,</text>
+  <text x="570" y="444" class="step">see server time and cache hits per query — no extra tool to install</text>
+
+  <text x="710" y="512" text-anchor="middle" class="sub">single writer · STRICT tables · foreign keys on · nothing runs between requests</text>
 </svg>

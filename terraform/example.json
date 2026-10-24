@@ -9,5 +9,8 @@
   "db_user": "admin",
   "db_password": "CHANGE-ME",
 
+  "endpoint_auth": "NONE",
+  "console": true,
+
   "auth_token": "CHANGE-ME-TOO"
 }

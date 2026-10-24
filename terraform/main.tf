@@ -101,6 +101,7 @@ resource "aws_lambda_function" "db" {
       DB_PREFIX   = local.prefix
       DB_USER     = var.db_user
       DB_PASSWORD = var.db_password
+      CONSOLE     = var.console ? "1" : "0"
     }
   }
 }
@@ -125,13 +126,14 @@ resource "aws_lambda_function" "db_ro" {
       DB_USER     = var.db_user
       DB_PASSWORD = var.db_password
       READONLY    = "1"
+      CONSOLE     = var.console ? "1" : "0"
     }
   }
 }
 
 resource "aws_lambda_function_url" "db_ro" {
   function_name      = aws_lambda_function.db_ro.function_name
-  authorization_type = "NONE"
+  authorization_type = var.endpoint_auth
   cors {
     allow_origins = ["*"]
     allow_methods = ["*"]
@@ -140,6 +142,7 @@ resource "aws_lambda_function_url" "db_ro" {
 }
 
 resource "aws_lambda_permission" "db_ro_url" {
+  count                  = var.endpoint_auth == "NONE" ? 1 : 0
   statement_id           = "AllowPublicFunctionUrl"
   action                 = "lambda:InvokeFunctionUrl"
   function_name          = aws_lambda_function.db_ro.function_name
@@ -148,6 +151,7 @@ resource "aws_lambda_permission" "db_ro_url" {
 }
 
 resource "aws_lambda_permission" "db_ro_url_invoke" {
+  count                    = var.endpoint_auth == "NONE" ? 1 : 0
   statement_id             = "AllowPublicFunctionUrlInvoke"
   action                   = "lambda:InvokeFunction"
   function_name            = aws_lambda_function.db_ro.function_name
@@ -181,13 +185,15 @@ resource "aws_lambda_function" "demo" {
   }
 }
 
-# ---------------- Function URLs(公网,靠 x-auth-token 挡门) ----------------
-# Public URL needs BOTH statements (AWS requirement since Oct 2025):
-#   lambda:InvokeFunctionUrl  with FunctionUrlAuthType = NONE
-#   lambda:InvokeFunction     with InvokedViaFunctionUrl = true
+# ---------------- Function URLs ----------------
+# endpoint_auth = NONE:    public URL, our user/password is the only gate. A public URL
+#                          needs BOTH permission statements (AWS requirement since Oct 2025):
+#                            lambda:InvokeFunctionUrl  with FunctionUrlAuthType = NONE
+#                            lambda:InvokeFunction     with InvokedViaFunctionUrl = true
+# endpoint_auth = AWS_IAM: AWS verifies SigV4 + IAM first; no public permissions are created.
 resource "aws_lambda_function_url" "db" {
   function_name      = aws_lambda_function.db.function_name
-  authorization_type = "NONE"
+  authorization_type = var.endpoint_auth
   cors {
     allow_origins = ["*"]
     allow_methods = ["*"]
@@ -196,6 +202,7 @@ resource "aws_lambda_function_url" "db" {
 }
 
 resource "aws_lambda_permission" "db_url" {
+  count                  = var.endpoint_auth == "NONE" ? 1 : 0
   statement_id           = "AllowPublicFunctionUrl"
   action                 = "lambda:InvokeFunctionUrl"
   function_name          = aws_lambda_function.db.function_name
@@ -204,6 +211,7 @@ resource "aws_lambda_permission" "db_url" {
 }
 
 resource "aws_lambda_permission" "db_url_invoke" {
+  count                    = var.endpoint_auth == "NONE" ? 1 : 0
   statement_id             = "AllowPublicFunctionUrlInvoke"
   action                   = "lambda:InvokeFunction"
   function_name            = aws_lambda_function.db.function_name

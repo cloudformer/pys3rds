@@ -27,6 +27,21 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Shared secret for the demo service's own API gate (x-auth-token)
+  EndpointAuth:
+    Type: String
+    Default: NONE
+    AllowedValues: [NONE, AWS_IAM]
+    Description: >-
+      NONE = public URL, only user/password is checked (default).
+      AWS_IAM = AWS verifies SigV4 + IAM first, then user/password; the browser console cannot be used.
+  Console:
+    Type: String
+    Default: "1"
+    AllowedValues: ["1", "0"]
+    Description: Serve the built-in web console at GET / ("0" = API only)
+
+Conditions:
+  PublicEndpoint: !Equals [!Ref EndpointAuth, NONE]
 
 Resources:
   # ---------------- S3: every database is one .sqlite file under db/ ----------------
@@ -85,20 +100,22 @@ Resources:
           DB_PREFIX: db/
           DB_USER: !Ref DbUser
           DB_PASSWORD: !Ref DbPassword
+          CONSOLE: !Ref Console
 
   DbUrl:
     Type: AWS::Lambda::Url
     Properties:
       TargetFunctionArn: !Ref DbFunction
-      AuthType: NONE
+      AuthType: !Ref EndpointAuth
       Cors:
         AllowOrigins: ["*"]
         AllowMethods: ["*"]
         AllowHeaders: [content-type, authorization]
 
-  # A public URL needs both statements (AWS requirement since Oct 2025)
+  # A public URL needs both statements (AWS requirement since Oct 2025); only when EndpointAuth = NONE
   DbUrlPermission:
     Type: AWS::Lambda::Permission
+    Condition: PublicEndpoint
     Properties:
       FunctionName: !Ref DbFunction
       Action: lambda:InvokeFunctionUrl
@@ -106,6 +123,7 @@ Resources:
       FunctionUrlAuthType: NONE
   DbUrlInvokePermission:
     Type: AWS::Lambda::Permission
+    Condition: PublicEndpoint
     Properties:
       FunctionName: !Ref DbFunction
       Action: lambda:InvokeFunction
@@ -130,18 +148,20 @@ Resources:
           DB_USER: !Ref DbUser
           DB_PASSWORD: !Ref DbPassword
           READONLY: "1"
+          CONSOLE: !Ref Console
 
   DbRoUrl:
     Type: AWS::Lambda::Url
     Properties:
       TargetFunctionArn: !Ref DbRoFunction
-      AuthType: NONE
+      AuthType: !Ref EndpointAuth
       Cors:
         AllowOrigins: ["*"]
         AllowMethods: ["*"]
         AllowHeaders: [content-type, authorization]
   DbRoUrlPermission:
     Type: AWS::Lambda::Permission
+    Condition: PublicEndpoint
     Properties:
       FunctionName: !Ref DbRoFunction
       Action: lambda:InvokeFunctionUrl
@@ -149,6 +169,7 @@ Resources:
       FunctionUrlAuthType: NONE
   DbRoUrlInvokePermission:
     Type: AWS::Lambda::Permission
+    Condition: PublicEndpoint
     Properties:
       FunctionName: !Ref DbRoFunction
       Action: lambda:InvokeFunction
