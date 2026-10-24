@@ -4,6 +4,8 @@
 
 [中文说明](README.zh.md) · Part of *Redefine Serverless* — AWS primitives that cost ≈ $0 when idle.
 
+![pys3rds architecture](docs/architecture.svg)
+
 > Design principle: this is a relational database, so correctness comes first — atomicity and
 > consistency are not negotiable. A write may fail, but it never duplicates and never corrupts.
 > The upside is cost (≈ $0 idle); the trade-off is performance. Order of priorities: correctness > cost > performance.
@@ -23,8 +25,6 @@ pys3rds has no instance. Nothing runs between requests. Lambda stays inside the 
 free tier (1M requests + 400k GB-s per month); beyond that it is $0.20 per million requests.
 
 ## How it works
-
-![pys3rds architecture](docs/architecture.svg)
 
 - **One database = one `.sqlite` file on S3.** The db lambda downloads it to `/tmp`, runs your SQL, and
   uploads the whole file back only if the data actually changed (SQLite's authorizer + a file fingerprint decide).

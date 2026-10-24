@@ -4,6 +4,8 @@
 
 [English](README.md) · *Redefine Serverless* 系列 —— 用 AWS 原语重做那些"闲着也要钱"的托管服务。
 
+![pys3rds 架构](docs/architecture.svg)
+
 > 设计原则：这是一个关系型数据库，数据正确性第一——原子性、一致性不妥协，
 > 写入可以失败，但绝不重复、绝不写错。优势是省钱（闲时 ≈ $0），代价是性能一般。
 > 取舍顺序：正确性 > 成本 > 性能。
@@ -23,8 +25,6 @@ pys3rds 没有实例，两次请求之间什么都不在运行。Lambda 在永�
 （每月 100 万次请求 + 40 万 GB·秒），超出后 $0.20/百万次。
 
 ## 怎么工作
-
-![pys3rds 架构](docs/architecture.svg)
 
 - **一个库 = S3 上一个 `.sqlite` 文件。** db lambda 把它拉到 `/tmp`、执行 SQL，**只有数据真的变了**才整文件回传
   （SQLite authorizer + 文件指纹双重判定）。
