@@ -6,7 +6,7 @@ terraform {
   }
 }
 
-# Credentials, one of (from dev.json):
+# Credentials, one of (from your -var-file json, see example.json):
 #   aws_profile      - a profile in ~/.aws (it may itself carry role_arn)
 #   assume_role_arn  - default credentials assume this deploy role
 #   both ""          - default credential chain

@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  pys3rds - a truly serverless RDS: Lambda URL as the database endpoint,
+  SQLite on S3, ~$0 when idle. Same resources as terraform/main.tf.
+
+# Deploy (AWS CLI only, no other tools):
+#   cp client/pys3mysql.py src/demo/            # demo bundles the driver
+#   aws cloudformation package --template-file cloudformation/template.yaml \
+#       --s3-bucket <any-bucket-you-own> --output-template-file /tmp/pys3rds.yaml
+#   aws cloudformation deploy --template-file /tmp/pys3rds.yaml --stack-name pys3rds \
+#       --capabilities CAPABILITY_IAM --parameter-overrides file://cloudformation/params.json
+
+Parameters:
+  Env:
+    Type: String
+    Default: dev
+    Description: Environment label; also the bucket name prefix (<Env>-srds-db-2026)
+  DbUser:
+    Type: String
+    Default: admin
+    Description: Database user (HTTP Basic), like the RDS master username
+  DbPassword:
+    Type: String
+    NoEcho: true
+    Description: Database password
+  AuthToken:
+    Type: String
+    NoEcho: true
+    Description: Shared secret for the demo service's own API gate (x-auth-token)
+
+Resources:
+  # ---------------- S3: every database is one .sqlite file under db/ ----------------
+  DbBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${Env}-srds-db-2026"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # ---------------- IAM: one role for all functions, scoped to db/*.sqlite ----------------
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: pys3rds
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogGroup, logs:CreateLogStream, logs:PutLogEvents]
+                Resource: arn:aws:logs:*:*:*
+              - Effect: Allow
+                Action: [s3:GetObject, s3:PutObject]
+                Resource: !Sub "${DbBucket.Arn}/db/*.sqlite"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !GetAtt DbBucket.Arn
+                Condition:
+                  StringLike: { "s3:prefix": ["db/*"] }
+
+  # ---------------- Lambda 1: the database (read/write endpoint + web console) ----------------
+  DbFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Env}-srds-db-lambda"
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Code: ../src/db
+      Timeout: 15
+      MemorySize: 256
+      ReservedConcurrentExecutions: 1   # single writer; CAS in code is the second guard
+      Environment:
+        Variables:
+          DB_BUCKET: !Ref DbBucket
+          DB_PREFIX: db/
+          DB_USER: !Ref DbUser
+          DB_PASSWORD: !Ref DbPassword
+
+  DbUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref DbFunction
+      AuthType: NONE
+      Cors:
+        AllowOrigins: ["*"]
+        AllowMethods: ["*"]
+        AllowHeaders: [content-type, authorization]
+
+  # A public URL needs both statements (AWS requirement since Oct 2025)
+  DbUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DbFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+  DbUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DbFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  # ---------------- Lambda 1b: read-only endpoint (same code, READONLY=1, unlimited concurrency) ----------------
+  DbRoFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Env}-srds-db-ro-lambda"
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Code: ../src/db
+      Timeout: 15
+      MemorySize: 256
+      Environment:
+        Variables:
+          DB_BUCKET: !Ref DbBucket
+          DB_PREFIX: db/
+          DB_USER: !Ref DbUser
+          DB_PASSWORD: !Ref DbPassword
+          READONLY: "1"
+
+  DbRoUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref DbRoFunction
+      AuthType: NONE
+      Cors:
+        AllowOrigins: ["*"]
+        AllowMethods: ["*"]
+        AllowHeaders: [content-type, authorization]
+  DbRoUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DbRoFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+  DbRoUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DbRoFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+  # ---------------- Lambda 2: demo business service (uses the db endpoint like an RDS) ----------------
+  DemoFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${Env}-srds-demo-lambda"
+      Runtime: python3.12
+      Handler: lambda_function.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Code: ../src/demo          # must contain pys3mysql.py: cp client/pys3mysql.py src/demo/
+      Timeout: 15
+      MemorySize: 256
+      ReservedConcurrentExecutions: 1
+      Environment:
+        Variables:
+          DB_ENDPOINT: !GetAtt DbUrl.FunctionUrl
+          DB_NAME: demo
+          DB_USER: !Ref DbUser
+          DB_PASSWORD: !Ref DbPassword
+          AUTH_TOKEN: !Ref AuthToken
+
+  DemoUrl:
+    Type: AWS::Lambda::Url
+    Properties:
+      TargetFunctionArn: !Ref DemoFunction
+      AuthType: NONE
+      Cors:
+        AllowOrigins: ["*"]
+        AllowMethods: ["*"]
+        AllowHeaders: [content-type, x-auth-token]
+  DemoUrlPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DemoFunction
+      Action: lambda:InvokeFunctionUrl
+      Principal: "*"
+      FunctionUrlAuthType: NONE
+  DemoUrlInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref DemoFunction
+      Action: lambda:InvokeFunction
+      Principal: "*"
+      InvokedViaFunctionUrl: true
+
+Outputs:
+  DbUrl:
+    Description: Read/write endpoint + web console (open in a browser)
+    Value: !GetAtt DbUrl.FunctionUrl
+  DbRoUrl:
+    Description: Read-only endpoint (unlimited concurrency; writes get 403)
+    Value: !GetAtt DbRoUrl.FunctionUrl
+  DemoUrl:
+    Description: Demo business service
+    Value: !GetAtt DemoUrl.FunctionUrl
+  DbBucket:
+    Value: !Ref DbBucket
