@@ -1,0 +1,3 @@
+{
+  "extraPaths": ["client", "src/db"]
+}

@@ -1,0 +1,13 @@
+{
+  "region": "us-east-2",
+  "aws_profile": "default",
+  "assume_role_arn": "",
+
+  "env": "dev",
+  "name": "srds",
+
+  "db_user": "admin",
+  "db_password": "CHANGE-ME",
+
+  "auth_token": "CHANGE-ME-TOO"
+}

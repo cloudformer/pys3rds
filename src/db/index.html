@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>srds console</title>
+<style>
+/* 风格参考 Automation_Delivery_EaC 的 db 页面 */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
+  background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+  min-height: 100vh;
+  padding: 40px 20px;
+}
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  background: white;
+  border-radius: 15px;
+  padding: 40px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+}
+h1 { color: #333; margin-bottom: 10px; }
+/* 顶部信息行:Endpoint 固定在前,Database 在后(定宽,切库不抖),退出靠右 */
+.db-info {
+  display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+  margin: 6px 0 24px; font-size: 13px;
+}
+.db-info .meta { display: inline-flex; align-items: center; gap: 8px; }
+.db-info .k {
+  font-size: 11px; font-weight: 600; letter-spacing: .06em;
+  text-transform: uppercase; color: #9ca3af;
+}
+.chip {
+  background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 6px;
+  padding: 4px 10px; color: #374151; font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+/* 定宽,像 format 的固定列:内容长短变化不影响后面元素的位置 */
+#info-db { width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 输出日志(DataGrip 风格) */
+.log {
+  background: #1f2937; color: #d1d5db; border-radius: 8px;
+  padding: 10px 14px; margin: 12px 0 0; max-height: 200px; overflow: auto;
+  font: 12px/1.7 ui-monospace, 'Courier New', monospace; white-space: pre-wrap;
+}
+.log:empty { display: none; }
+.log.expanded { max-height: 360px; }
+.log .sep { border-top: 1px dashed #4b5563; margin: 6px 0; }
+.log .sql { color: #93c5fd; }
+.log .ok  { color: #86efac; }
+.log .err { color: #fca5a5; }
+
+/* Controls */
+.controls { display: flex; gap: 15px; margin: 20px 0; flex-wrap: wrap; align-items: center; }
+.controls label { font-size: 14px; font-weight: 600; color: #4b5563; }
+.controls select {
+  padding: 10px 15px; border: 2px solid #e5e7eb; border-radius: 6px;
+  font-size: 14px; min-width: 180px; background: white;
+}
+.btn {
+  padding: 10px 20px; border: none; border-radius: 6px;
+  font-weight: 600; cursor: pointer; transition: all .3s; font-size: 14px;
+}
+.btn-primary   { background: #10b981; color: white; }
+.btn-primary:hover { background: #059669; }
+.btn-secondary { background: #667eea; color: white; }
+.btn-secondary:hover { background: #5568d3; }
+.btn-ghost { background: white; color: #374151; border: 2px solid #e5e7eb; }
+.btn-ghost:hover { border-color: #667eea; color: #667eea; }
+.btn-danger {
+  background: #ef4444; color: white; padding: 5px 10px;
+  border: none; border-radius: 4px; cursor: pointer; font-size: 12px;
+}
+.btn-danger:hover { background: #dc2626; }
+.btn-small { padding: 5px 10px; font-size: 12px; border-radius: 4px; }
+
+/* Table section */
+.table-section {
+  margin: 30px 0; border: 2px solid #e5e7eb; border-radius: 10px;
+  padding: 20px; background: #f8fafc;
+}
+.table-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+.table-name { font-size: 22px; font-weight: 600; color: #1f2937; }
+.row-count {
+  background: #10b981; color: white; padding: 6px 15px;
+  border-radius: 20px; font-size: 14px; font-weight: 600;
+}
+.section-title {
+  font-size: 16px; font-weight: 600; color: #4b5563; margin: 20px 0 10px 0;
+  display: flex; align-items: center; gap: 10px;
+}
+table {
+  width: 100%; border-collapse: collapse; background: white;
+  border-radius: 8px; overflow: hidden; margin-bottom: 20px;
+}
+th {
+  background: #374151; color: white; padding: 12px; text-align: left;
+  font-weight: 600; font-size: 14px; white-space: nowrap;
+}
+td {
+  padding: 10px 12px; border-bottom: 1px solid #e5e7eb;
+  font-size: 14px; color: #374151; max-width: 420px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #f9fafb; }
+td.null { color: #9ca3af; font-style: italic; }
+td input {
+  width: 100%; min-width: 80px; padding: 6px 8px;
+  border: 2px solid #e5e7eb; border-radius: 4px; font-size: 13px;
+}
+
+/* Add form */
+.add-form {
+  background: #f0fdf4; border: 2px solid #10b981; border-radius: 8px;
+  padding: 20px; margin: 20px 0;
+}
+.add-form h3 { color: #065f46; margin-bottom: 15px; font-size: 18px; }
+.form-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 15px; margin-bottom: 15px;
+}
+.form-field label {
+  display: block; font-size: 13px; font-weight: 600;
+  color: #374151; margin-bottom: 5px;
+}
+.form-field input {
+  width: 100%; padding: 8px; border: 2px solid #e5e7eb;
+  border-radius: 4px; font-size: 14px;
+}
+.form-field small { color: #6b7280; font-size: 12px; }
+
+/* Pagination */
+.pagination { display: flex; gap: 10px; justify-content: center; align-items: center; margin: 20px 0 0; }
+.pagination button, .pagination span {
+  padding: 8px 12px; border-radius: 6px; font-size: 14px;
+  color: #374151; background: white; border: 2px solid #e5e7eb;
+}
+.pagination button { cursor: pointer; }
+.pagination button:hover:not(:disabled) { background: #667eea; color: white; border-color: #667eea; }
+.pagination button:disabled { opacity: .5; cursor: not-allowed; }
+.pagination .current { background: #667eea; color: white; border-color: #667eea; font-weight: 600; }
+
+.empty { padding: 40px; text-align: center; color: #9ca3af; }
+
+/* SQL console */
+.sql-section {
+  margin: 20px 0; border: 2px solid #e5e7eb; border-radius: 10px;
+  padding: 20px; background: #f8fafc;
+}
+.sql-section textarea {
+  width: 100%; height: 90px; resize: vertical; padding: 12px;
+  border: 2px solid #e5e7eb; border-radius: 6px; font-size: 14px;
+  font-family: ui-monospace, 'Courier New', monospace;
+}
+.sql-actions { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+.hint { font-size: 12px; color: #6b7280; }
+
+/* 页内模态框(不用浏览器 prompt,避免被"阻止对话框"机制吞掉) */
+dialog {
+  border: none; border-radius: 10px; padding: 25px;
+  box-shadow: 0 20px 60px rgba(0,0,0,.3); min-width: 340px; max-width: 90vw;
+}
+dialog::backdrop { background: rgba(0,0,0,.4); }
+dialog h3 { margin-bottom: 15px; color: #1f2937; font-size: 17px; }
+dialog .form-grid { grid-template-columns: 1fr; }
+@media (max-width: 640px){ .container { padding: 20px; } body { padding: 16px; } }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>📊 srds 数据库控制台</h1>
+  <div class="db-info">
+    <span class="meta"><span class="k">Endpoint</span><span class="chip" id="info-host">-</span></span>
+    <span class="meta"><span class="k">Database</span><span class="chip" id="info-db">-</span></span>
+    <button class="btn btn-ghost btn-small" id="logout">退出账号</button>
+  </div>
+
+  <div class="controls">
+    <label>库</label><select id="dbs"></select>
+    <button class="btn btn-secondary" id="newdb">＋ 新建库</button>
+    <label>表</label><select id="tables"></select>
+    <button class="btn btn-secondary" id="newtable">＋ 新建表</button>
+    <button class="btn btn-ghost" id="refresh">刷新</button>
+  </div>
+
+  <div class="sql-section">
+    <div class="section-title">SQL 控制台</div>
+    <textarea id="sql" placeholder="一次一条语句。例:CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL) STRICT"></textarea>
+    <div class="sql-actions">
+      <button class="btn btn-primary" id="run">▶ 运行</button>
+      <span class="hint">⌘/Ctrl+Enter 运行;空输入框 = NULL</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-ghost btn-small" id="togglelog">历史</button>
+    </div>
+    <div class="log" id="log"></div>
+    <div id="sqlout" style="margin-top:12px" hidden><table id="sqlgrid"></table></div>
+  </div>
+
+  <div id="main"></div>
+</div>
+
+<dialog id="dlg">
+  <form method="dialog">
+    <h3 id="dlgtitle"></h3>
+    <div class="form-grid" id="dlgbody"></div>
+    <div class="sql-actions">
+      <button class="btn btn-primary" value="ok">确定</button>
+      <button class="btn btn-ghost" value="cancel" formnovalidate>取消</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const $ = s => document.querySelector(s);
+const state = {db:null, table:null, tables:[], loaded:false, offset:0, limit:50, total:0,
+               columns:[], rows:[], structure:[]};
+// 浏览器本地只记两样:登录凭证、上次选中的库/表(数据永远现查)
+const store = {
+  get: k => { try { return localStorage.getItem('srds_' + k); } catch(e){ return null; } },
+  set: (k, v) => { try { v == null ? localStorage.removeItem('srds_' + k)
+                                   : localStorage.setItem('srds_' + k, v); } catch(e){} },
+};
+let cred = store.get('cred') || '';
+
+$('#info-host').textContent = location.host;
+
+function saveCred(c){ cred = c; store.set('cred', c || null); }
+
+// 页内模态框:dialog('标题', [{key,label,type,placeholder,value}]) -> {key:值} 或 null(取消)
+function dialog(title, fields){
+  return new Promise(resolve => {
+    $('#dlgtitle').textContent = title;
+    $('#dlgbody').innerHTML = (fields || []).map(f => `<div class="form-field">
+      <label>${esc(f.label)}</label>
+      <input name="${esc(f.key)}" type="${f.type || 'text'}"
+             placeholder="${esc(f.placeholder || '')}" value="${esc(f.value || '')}">
+    </div>`).join('');
+    const dlg = $('#dlg');
+    dlg.returnValue = 'cancel';
+    dlg.onclose = () => {
+      if (dlg.returnValue !== 'ok') return resolve(null);
+      const out = {};
+      $('#dlgbody').querySelectorAll('input').forEach(i => out[i.name] = i.value.trim());
+      resolve(out);
+    };
+    dlg.showModal();
+    const first = $('#dlgbody input');
+    if (first) first.focus();
+  });
+}
+
+async function askCred(){
+  const v = await dialog('数据库登录', [
+    {key:'u', label:'用户名', placeholder:'db_user'},
+    {key:'p', label:'密码', type:'password'},
+  ]);
+  if (v) saveCred(v.u + ':' + v.p);
+}
+// ---- 输出日志:每条执行回显 "库> SQL",下一行带时间戳的结果 ----
+function ts(){
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+function fmtMs(ms){
+  ms = Math.max(0, Math.round(ms));
+  return ms >= 1000 ? `${Math.floor(ms/1000)} s ${ms%1000} ms` : `${ms} ms`;
+}
+// 一次执行 = 一组(SQL 行 + 结果行)。默认只显示最新一组;「历史」展开全部,最新在上
+const logGroups = [];
+let logExpanded = false;
+function logStart(){
+  logGroups.push([]);
+  if (logGroups.length > 300) logGroups.shift();
+}
+function log(text, cls){
+  if (!logGroups.length) logStart();
+  logGroups[logGroups.length - 1].push({text, cls});
+  renderLog();
+}
+function renderLog(){
+  const el = $('#log');
+  el.innerHTML = '';
+  el.classList.toggle('expanded', logExpanded);
+  const groups = logExpanded ? logGroups.slice().reverse() : logGroups.slice(-1);
+  groups.forEach((g, i) => {
+    if (i) el.appendChild(Object.assign(document.createElement('div'), {className: 'sep'}));
+    g.forEach(l => el.appendChild(Object.assign(document.createElement('div'),
+      {className: l.cls || '', textContent: l.text})));
+  });
+  el.scrollTop = 0;
+  $('#togglelog').textContent = logExpanded ? '只看最新' : `历史 (${logGroups.length})`;
+}
+function logSql(sql){ logStart(); log(`${state.db}> ${sql.replace(/\s+/g, ' ').trim()}`, 'sql'); }
+function msg(t, ok){ if (t) log(`[${ts()}] ${t}`, ok ? 'ok' : 'err'); }
+// total = 浏览器看到的往返;execution = 服务端耗时;fetching = 差值(网络+传输)
+function timing(d){
+  const total = d._total || 0, exec = d.ms || 0;
+  return `in ${fmtMs(total)} (execution: ${fmtMs(exec)}, fetching: ${fmtMs(total - exec)}) · ${d.s3}`;
+}
+function rowsLine(d){ return `${d.rows.length} rows retrieved ${timing(d)}`; }
+function doneLine(d){ return `${d.rowcount >= 0 ? d.rowcount + ' rows affected' : 'completed'} ${timing(d)}`; }
+function esc(s){ return String(s).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function sqlStr(v){ return v === null ? 'NULL' : "'" + String(v).replace(/'/g, "''") + "'"; }
+function friendly(m){
+  if (/incomplete input/.test(m))
+    return m + ' ← 语句不完整:建表必须带列定义,如 CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)';
+  if (/syntax error/.test(m))
+    return m + ' ← SQL 语法错误;注意控制台一次只执行一条语句';
+  if (/no such table/.test(m))
+    return m + ' ← 表不存在:先建表,或检查选中的库对不对';
+  if (/no such column/.test(m))
+    return m + ' ← 列不存在:可在 SQL 控制台 ALTER TABLE ... ADD COLUMN';
+  if (/NOT NULL constraint/.test(m))
+    return m + ' ← 必填列没给值';
+  if (/unknown datatype/.test(m))
+    return m + ' ← STRICT 表的列类型只能是 INTEGER / REAL / TEXT / BLOB / ANY';
+  if (/FOREIGN KEY constraint/.test(m))
+    return m + ' ← 违反外键:引用的父记录不存在,或父记录还被引用着';
+  if (/只读入口/.test(m))
+    return m + ' ← 这个地址是只读 endpoint,改数据请打开写端点(db_url)的控制台';
+  if (/并发写冲突/.test(m))
+    return m + ' ← 本次写入未生效,刷新后重试';
+  return m;
+}
+
+async function api(path, opts = {}){
+  if (!cred) await askCred();
+  if (!cred) throw new Error('需要先登录（已取消）');
+  const t0 = performance.now();
+  const r = await fetch(path, Object.assign({}, opts, {
+    headers: {'content-type':'application/json', 'authorization': 'Basic ' + btoa(cred)}}));
+  let data = {}; try { data = await r.json(); } catch(e) {}
+  if (r.status === 401){ saveCred(''); throw new Error('用户名或密码不对，重试会重新询问'); }
+  if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+  data._total = performance.now() - t0;
+  return data;
+}
+
+// 库列表、表列表自动加载并恢复上次选中;数据不自动拉,等用户点「加载数据」或切表
+async function loadDbs(keep){
+  const d = await api('/api/databases');
+  const want = keep || store.get('db');
+  $('#dbs').innerHTML = '<option value="">-- 选择库 --</option>'
+    + d.databases.map(n => `<option>${esc(n)}</option>`).join('');
+  state.db = d.databases.includes(want) ? want : null;
+  $('#dbs').value = state.db || '';
+  store.set('db', state.db);
+  await loadTables();
+}
+async function loadTables(keep){
+  const wasLoaded = state.loaded && keep && keep === state.table;
+  state.table = null; state.tables = []; state.loaded = false; state.offset = 0;
+  $('#tables').innerHTML = '<option value="">-- 选择表 --</option>';
+  if (state.db){
+    const d = await api(`/api/db/${state.db}/tables`);
+    state.tables = d.tables;
+    $('#tables').innerHTML += d.tables.map(n => `<option>${esc(n)}</option>`).join('');
+    const want = keep || store.get('table:' + state.db);
+    state.table = d.tables.includes(want) ? want : null;
+    $('#tables').value = state.table || '';
+    store.set('table:' + state.db, state.table);
+  }
+  if (wasLoaded) await loadRows(); else render();  // 之前正看着数据(如 DDL 后)才顺手刷新
+}
+async function loadRows(){
+  if (!state.table){ render(); return; }
+  const d = await api(
+    `/api/db/${state.db}/table/${state.table}?limit=${state.limit}&offset=${state.offset}`);
+  Object.assign(state, {columns:d.columns, rows:d.rows, total:d.total,
+                        structure:d.structure || [], ms:d.ms, s3:d.s3, loaded:true});
+  render();
+}
+
+function isAutoPk(col){ return col.pk && /^INTEGER$/i.test(col.type || ''); }
+
+function render(){
+  $('#info-db').textContent = state.db || '-';
+  const main = $('#main');
+  if (!state.db){
+    main.innerHTML = '<div class="table-section"><div class="empty">从上方选择一个库，或点「＋ 新建库」</div></div>';
+    return;
+  }
+  if (!state.table){
+    main.innerHTML = `<div class="table-section"><div class="empty">${state.tables.length
+      ? '从上方选择一张表'
+      : '这个库还没有表——点「＋ 新建表」开始,或在下方 SQL 控制台写 CREATE TABLE'}</div></div>`;
+    return;
+  }
+  if (!state.loaded){
+    main.innerHTML = `<div class="table-section">
+      <div class="table-header"><div class="table-name">📋 ${esc(state.table)}</div></div>
+      <div class="empty">数据不自动加载。
+        <button class="btn btn-primary" id="loadbtn" style="margin-left:10px">加载数据</button>
+      </div></div>`;
+    $('#loadbtn').onclick = () => loadRows().catch(e => msg(friendly(e.message)));
+    return;
+  }
+  const hasRowid = state.columns[0] === '_rowid_';
+  const pages = Math.max(1, Math.ceil(state.total / state.limit));
+  const page = Math.floor(state.offset / state.limit) + 1;
+
+  // 表结构(同 DESCRIBE),每列带 改名/删列 操作
+  const structRows = state.structure.map((c, i) => `<tr>
+      <td><strong>${esc(c.name)}</strong></td>
+      <td>${esc(c.type || '-')}</td>
+      <td>${c.notnull ? 'NO' : 'YES'}</td>
+      <td>${c.pk ? 'PRI' : '-'}</td>
+      <td>${c.dflt_value === null ? '-' : esc(c.dflt_value)}</td>
+      <td>${isAutoPk(c) ? 'auto_increment' : '-'}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-ghost btn-small" onclick="renameCol(${i})">改名</button>
+        ${c.pk ? '' : `<button class="btn-danger" onclick="dropCol(${i})">删列</button>`}
+      </td>
+    </tr>`).join('');
+
+  // 插入表单:按列生成,自增主键跳过
+  const formFields = state.structure.filter(c => !isAutoPk(c)).map(c => {
+    const required = c.notnull && c.dflt_value === null && !c.pk;
+    return `<div class="form-field">
+      <label>${esc(c.name)}</label>
+      <input data-col="${esc(c.name)}" placeholder="${esc(c.type || '')}">
+      <small>${esc(c.type || '')}${required ? ' (必填)' : ''}${c.dflt_value !== null ? ' 默认 ' + esc(c.dflt_value) : ''}</small>
+    </div>`;
+  }).join('');
+
+  // 数据网格
+  const dataHead = '<tr>' + state.columns.map(c => `<th>${esc(c)}</th>`).join('')
+    + (hasRowid ? '<th>操作</th>' : '') + '</tr>';
+  const dataRows = state.rows.map((r, i) =>
+    `<tr data-i="${i}">` + r.map(v => v === null
+      ? '<td class="null">NULL</td>' : `<td>${esc(v)}</td>`).join('')
+    + (hasRowid
+      ? `<td style="white-space:nowrap"><button class="btn btn-ghost btn-small" onclick="editRow(${i})">编辑</button>
+         <button class="btn-danger" onclick="delRow(${i})">🗑 删除</button></td>` : '')
+    + '</tr>').join('');
+
+  main.innerHTML = `
+  <div class="table-section">
+    <div class="table-header">
+      <div class="table-name">📋 ${esc(state.table)}</div>
+      <div class="row-count">${state.total} rows</div>
+    </div>
+
+    <div class="section-title">表结构
+      <button class="btn btn-secondary btn-small" id="addcol">＋ 加列</button>
+    </div>
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Null</th><th>Key</th><th>Default</th><th>Extra</th><th>操作</th></tr></thead>
+      <tbody>${structRows}</tbody>
+    </table>
+
+    <div class="add-form">
+      <h3>➕ 插入一行到 ${esc(state.table)}</h3>
+      <div class="form-grid" id="addgrid">${formFields ||
+        '<small style="color:#6b7280">只有自增主键列,直接点插入即可</small>'}</div>
+      <button class="btn btn-primary" id="addrow">插入</button>
+      <small class="hint" style="margin-left:10px">留空的列走默认值/NULL</small>
+    </div>
+
+    <div class="section-title">数据（第 ${page} / ${pages} 页）
+      ${state.ms !== undefined ? `<span class="hint">本次 ${state.ms}ms · ${state.s3}</span>` : ''}
+    </div>
+    ${state.rows.length
+      ? `<table id="grid"><thead>${dataHead}</thead><tbody>${dataRows}</tbody></table>`
+      : '<div class="empty">表里还没有数据，用上面的表单插入第一行</div>'}
+
+    <div class="pagination">
+      <button id="prev" ${state.offset <= 0 ? 'disabled' : ''}>← 上一页</button>
+      <span class="current">${page} / ${pages}</span>
+      <button id="next" ${state.offset + state.limit >= state.total ? 'disabled' : ''}>下一页 →</button>
+    </div>
+  </div>`;
+
+  $('#addrow').onclick = addRow;
+  $('#addcol').onclick = addCol;
+  $('#prev').onclick = () => { state.offset = Math.max(0, state.offset - state.limit);
+    loadRows().catch(e => msg(friendly(e.message))); };
+  $('#next').onclick = () => { state.offset += state.limit;
+    loadRows().catch(e => msg(friendly(e.message))); };
+}
+
+async function runWrite(sql){
+  logSql(sql);
+  try {
+    const d = await api(`/api/db/${state.db}/query`, {method:'POST', body: JSON.stringify({sql})});
+    msg(doneLine(d), true);
+    await loadRows();
+  } catch(e){ msg(friendly(e.message)); }
+}
+
+async function addRow(){
+  const names = [], vals = [];
+  document.querySelectorAll('#addgrid input').forEach(inp => {
+    if (inp.value !== ''){
+      names.push(`"${inp.dataset.col}"`);
+      vals.push(sqlStr(inp.value));
+    }
+  });
+  const sql = names.length
+    ? `INSERT INTO "${state.table}" (${names.join(',')}) VALUES (${vals.join(',')})`
+    : `INSERT INTO "${state.table}" DEFAULT VALUES`;
+  await runWrite(sql);
+}
+
+async function addCol(){
+  const v = await dialog('加列', [{key:'spec', label:'列定义（列名 类型 [约束]）,类型:INTEGER/REAL/TEXT/BLOB',
+    placeholder:'如 title TEXT NOT NULL / price REAL DEFAULT 0'}]);
+  if (!v || !v.spec) return;
+  runWrite(`ALTER TABLE "${state.table}" ADD COLUMN ${v.spec}`);
+}
+window.renameCol = async function(i){
+  const col = state.structure[i].name;
+  const v = await dialog(`列「${col}」改名`, [{key:'name', label:'新列名', value: col}]);
+  const nv = v && v.name;
+  if (!nv || nv === col) return;
+  if (!/^[A-Za-z0-9_-]+$/.test(nv)){ msg('列名只能是字母数字 - _'); return; }
+  await runWrite(`ALTER TABLE "${state.table}" RENAME COLUMN "${col}" TO "${nv}"`);
+};
+window.dropCol = async function(i){
+  const col = state.structure[i].name;
+  if (!await dialog(`删除列「${col}」？该列所有数据会一起删掉`, [])) return;
+  await runWrite(`ALTER TABLE "${state.table}" DROP COLUMN "${col}"`);
+};
+
+window.editRow = function(i){
+  const tr = document.querySelector(`#grid tr[data-i="${i}"]`);
+  const row = state.rows[i];
+  tr.innerHTML = state.columns.map((c, j) => j === 0
+    ? `<td>${esc(row[0])}</td>`
+    : `<td><input data-j="${j}" value="${row[j] === null ? '' : esc(row[j])}" placeholder="NULL"></td>`
+  ).join('') + `<td style="white-space:nowrap">
+      <button class="btn btn-primary btn-small" onclick="saveRow(${i})">保存</button>
+      <button class="btn btn-ghost btn-small" onclick="loadRows()">取消</button></td>`;
+};
+window.saveRow = async function(i){
+  const tr = document.querySelector(`#grid tr[data-i="${i}"]`);
+  const sets = [];
+  tr.querySelectorAll('input').forEach(inp => {
+    const j = +inp.dataset.j, old = state.rows[i][j];
+    const nv = inp.value === '' ? null : inp.value;
+    const changed = (nv === null) !== (old === null) || String(nv) !== String(old);
+    if (changed) sets.push(`"${state.columns[j]}" = ${sqlStr(nv)}`);
+  });
+  if (!sets.length){ loadRows(); return; }
+  await runWrite(`UPDATE "${state.table}" SET ${sets.join(', ')} WHERE rowid = ${state.rows[i][0]}`);
+};
+window.delRow = async function(i){
+  if (!await dialog('确认删除这一行？', [])) return;
+  await runWrite(`DELETE FROM "${state.table}" WHERE rowid = ${state.rows[i][0]}`);
+};
+
+$('#refresh').onclick = () => loadDbs(state.db).catch(e => msg(friendly(e.message)));
+$('#dbs').onchange = e => { state.db = e.target.value || null; store.set('db', state.db);
+  loadTables().catch(err => msg(friendly(err.message))); };
+$('#tables').onchange = e => {  // 用户亲手选的表 → 这时才拉数据
+  state.table = e.target.value || null; state.offset = 0; state.loaded = false;
+  store.set('table:' + state.db, state.table);
+  loadRows().catch(err => msg(friendly(err.message))); };
+$('#newdb').onclick = async () => {
+  const v = await dialog('新建库', [{key:'name', label:'库名（字母数字 - _）'}]);
+  const name = v && v.name;
+  if (!name) return;
+  try {
+    await api('/api/databases', {method:'POST', body: JSON.stringify({name})});
+    msg('✓ 已创建数据库 ' + name, true);
+    await loadDbs(name);
+  } catch(e){ msg(friendly(e.message)); }
+};
+$('#newtable').onclick = async () => {
+  if (!state.db){ msg('先选择一个库'); return; }
+  const v = await dialog('新建表（自带自增 id 主键列）', [{key:'name', label:'表名（字母数字 - _）'}]);
+  const name = v && v.name;
+  if (!name) return;
+  if (!/^[A-Za-z0-9_-]+$/.test(name)){ msg('表名只能是字母数字 - _'); return; }
+  try {
+    await api(`/api/db/${state.db}/query`, {method:'POST', body: JSON.stringify(
+      {sql: `CREATE TABLE "${name}" (id INTEGER PRIMARY KEY AUTOINCREMENT) STRICT`})});
+    msg(`✓ 已建表 ${name}（STRICT 严格类型,自带自增 id 列），用「＋ 加列」加字段`, true);
+    await loadTables(name);
+    await loadRows();  // 刚建的表直接打开
+  } catch(e){ msg(friendly(e.message)); }
+};
+$('#logout').onclick = () => { saveCred(''); msg('已退出，下次操作会重新询问用户名/密码', true); };
+
+async function runSql(){
+  const sql = $('#sql').value.trim();
+  if (!state.db){ msg('先选择一个库'); return; }
+  if (!sql) return;
+  logSql(sql);
+  try {
+    const d = await api(`/api/db/${state.db}/query`, {method:'POST', body: JSON.stringify({sql})});
+    const out = $('#sqlout'), t = $('#sqlgrid');
+    if (d.columns.length){
+      out.hidden = false;
+      t.innerHTML = '<thead><tr>' + d.columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr></thead><tbody>'
+        + d.rows.map(r => '<tr>' + r.map(v => v === null
+          ? '<td class="null">NULL</td>' : `<td>${esc(v)}</td>`).join('') + '</tr>').join('') + '</tbody>';
+      msg(rowsLine(d), true);
+    } else {
+      t.innerHTML = ''; out.hidden = true;
+      msg(doneLine(d), true);
+      loadTables(state.table).catch(e => msg(friendly(e.message)));
+    }
+  } catch(e){ msg(friendly(e.message)); }
+}
+$('#run').onclick = runSql;
+$('#togglelog').onclick = () => { logExpanded = !logExpanded; renderLog(); };
+$('#sql').addEventListener('keydown', e => {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter'){ e.preventDefault(); runSql(); } });
+
+loadDbs().catch(e => msg(friendly(e.message)));
+</script>
+</body>
+</html>

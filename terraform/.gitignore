@@ -1,0 +1,9 @@
+.terraform/
+.build/
+state/
+*.tfstate
+*.tfstate.backup
+.terraform.lock.hcl
+# 真实配置含密码,只提交 example.json
+*.json
+!example.json

@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/
+# pip 包构建产物
+client/dist/
+client/build/
+client/*.egg-info/
