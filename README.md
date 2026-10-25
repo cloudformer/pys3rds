@@ -6,6 +6,15 @@
 
 ![s3rds architecture](docs/architecture.svg)
 
+| | **s3rds** | RDS `db.t4g.micro` single-AZ | RDS `db.t4g.micro` Multi-AZ | Aurora Serverless v2 |
+|---|---|---|---|---|
+| Idle cost / month (us-east-2) | **≈ $0** (S3 storage only) | ~$14 | ~$28 | ~$45 (0.5 ACU floor) |
+| Availability zones | regional, multi-AZ by construction | one | two | multi |
+| Instance failure | no instance | minutes of downtime | failover ~60 s | failover |
+| Maintenance window | none | yes, with restarts | yes | yes |
+| SLA | Lambda 99.95% · S3 99.9% | none for single-AZ | 99.95% | 99.99% |
+| Durability | S3, 11 nines | EBS | EBS, replicated | 6 copies |
+
 > Design principle: this is a relational database, so correctness comes first — atomicity and
 > consistency are not negotiable. A write may fail, but it never duplicates and never corrupts.
 > The upside is cost (≈ $0 idle); the trade-off is performance. Order of priorities: correctness > cost > performance.
@@ -13,13 +22,7 @@
 ## Why
 
 "Serverless" on AWS usually means *the box scales*. It rarely means *there is no box*.
-
-| Option | Idle cost / month (us-east-2, approx.) |
-|---|---|
-| **s3rds** | **≈ $0** — S3 storage only; a 20 MB database ≈ $0.0005 |
-| RDS MySQL `db.t4g.micro` (cheapest provisioned) | ~$14 (instance + 20 GB gp3; free tier for 12 months only) |
-| RDS MySQL `db.t4g.medium` | ~$50 |
-| Aurora Serverless v2 (0.5 ACU floor) | ~$45 (storage billed even when paused) |
+The cheapest provisioned RDS is ~$14/month and has no SLA; Aurora Serverless v2 still bills ~$45/month at its floor.
 
 s3rds has no instance. Nothing runs between requests. Lambda stays inside the permanent
 free tier (1M requests + 400k GB-s per month); beyond that it is $0.20 per million requests.
@@ -128,6 +131,7 @@ curl -s -u "admin:password" -H "content-type: application/json" \
 | **Isolation** | one writer (reserved concurrency 1 + `If-Match` CAS); readers see a whole-file snapshot |
 | **Durability** | the client gets OK only after the S3 PUT succeeds (11 nines) |
 | **No duplicate writes** | the driver re-sends only when the request provably never reached the server; timeouts raise "result unknown" |
+| **Availability** | Lambda and S3 are regional, multi-AZ services: no instance to fail, no AZ to lose, no maintenance window. Higher than a single-AZ RDS instance (which carries no SLA); Multi-AZ RDS costs 2× to match |
 
 All of this is pinned by tests against an in-memory S3 that implements ETag / `If-Match` / `If-None-Match` semantics:
 

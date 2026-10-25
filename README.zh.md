@@ -6,6 +6,15 @@
 
 ![s3rds 架构](docs/architecture.svg)
 
+| | **s3rds** | RDS `db.t4g.micro` 单 AZ | RDS `db.t4g.micro` Multi-AZ | Aurora Serverless v2 |
+|---|---|---|---|---|
+| 闲时月费（us-east-2） | **≈ $0**（只有 S3 存储） | ~$14 | ~$28 | ~$45（0.5 ACU 底价） |
+| 可用区 | 区域级，天然多 AZ | 一个 | 两个 | 多 |
+| 实例故障 | 没有实例 | 停机数分钟 | 故障转移 ~60 秒 | 故障转移 |
+| 维护窗口 | 无 | 有，会重启 | 有 | 有 |
+| SLA | Lambda 99.95% · S3 99.9% | 单 AZ 无 SLA | 99.95% | 99.99% |
+| 持久性 | S3，11 个 9 | EBS | EBS 复制 | 6 副本 |
+
 > 设计原则：这是一个关系型数据库，数据正确性第一——原子性、一致性不妥协，
 > 写入可以失败，但绝不重复、绝不写错。优势是省钱（闲时 ≈ $0），代价是性能一般。
 > 取舍顺序：正确性 > 成本 > 性能。
@@ -13,13 +22,7 @@
 ## 为什么
 
 AWS 的"serverless"大多指**实例会自动伸缩**，很少指**根本没有实例**。
-
-| 方案 | 闲时月费（us-east-2，约数） |
-|---|---|
-| **s3rds** | **≈ $0** —— 只有 S3 存储费，20 MB 的库 ≈ $0.0005 |
-| RDS MySQL `db.t4g.micro`（最便宜的 provisioned） | ~$14（实例 + 20 GB gp3；免费层只有 12 个月） |
-| RDS MySQL `db.t4g.medium` | ~$50 |
-| Aurora Serverless v2（最低 0.5 ACU） | ~$45（暂停了存储也照收） |
+最便宜的 provisioned RDS 也要 ~$14/月且没有 SLA；Aurora Serverless v2 在底价也要 ~$45/月。
 
 s3rds 没有实例，两次请求之间什么都不在运行。Lambda 在永久免费额度内
 （每月 100 万次请求 + 40 万 GB·秒），超出后 $0.20/百万次。
@@ -124,6 +127,7 @@ curl -s -u "admin:密码" -H "content-type: application/json" \
 | **隔离性** | 单写者（reserved concurrency 1 + `If-Match` CAS）；读到的是整文件快照 |
 | **持久性** | S3 PUT 成功后客户端才收到 OK（11 个 9） |
 | **绝不重复写** | 驱动只在"请求确定没送达"时重发；超时一律报"结果未知" |
+| **可用性** | Lambda 和 S3 是区域级、天然多 AZ 的服务：没有实例会挂、没有 AZ 可丢、没有维护窗口。高于单 AZ 的 RDS 实例（单 AZ 没有 SLA）；RDS 要开 Multi-AZ 花两倍钱才追平 |
 
 这些承诺由测试钉死（内存假 S3 实现了 ETag / `If-Match` / `If-None-Match` 语义）：
 
