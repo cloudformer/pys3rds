@@ -133,8 +133,13 @@ rowcount、lastrowid 和错误码。
 | ⛔ unsupported by design | 明确拒绝（`NotSupportedError`：行锁、触发器、存储过程），绝不静默走样 |
 | 🔴 regression | 以前一致现在不一致，阻止发版 |
 
-重新生成：`docker compose -f tests/compat/docker-compose.yml up -d mysql`，然后
-`MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat python3 -m pytest tests -q`。
+重新生成报告（MySQL 参照库跑在 Docker 里）：
+
+```bash
+docker compose -f tests/compat/docker-compose.yml up -d mysql
+MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat python3 -m pytest tests -q
+docker compose -f tests/compat/docker-compose.yml down
+```
 
 ## 保证
 
@@ -179,12 +184,7 @@ pytest tests/ -v
 
 **兼容性报告 —— [tests/compat/REPORT.md](tests/compat/REPORT.md)。** 上面每一项能力对应一个测试：同一条 SQL
 在 Docker 里的真 MySQL 8.0 和 s3rds 上各跑一遍，比对结果、Python 类型、rowcount、lastrowid 和错误码。
-verified 的可以放心用；gap 的标了哪个任务来修。每次运行自动重新生成：
-
-```bash
-docker compose -f tests/compat/docker-compose.yml up -d mysql
-MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat python3 -m pytest tests/compat -q
-```
+verified 的可以放心用；gap 的标了哪个任务来修。每次运行自动重新生成（命令见上面[兼容性](#兼容性)一节）。
 
 ## 适用规模
 
