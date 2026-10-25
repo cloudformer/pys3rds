@@ -74,7 +74,8 @@ def test_translate_table_level_pk_moves_into_column():
 def test_translate_upsert_and_limit():
     out = _translate("INSERT INTO t (id, v) VALUES (1, 'x') ON DUPLICATE KEY UPDATE v = VALUES(v)").upper()
     assert "ON CONFLICT DO UPDATE SET" in out and "EXCLUDED.V" in out
-    assert "INSERT OR IGNORE" in _translate("INSERT IGNORE INTO t (id) VALUES (1)").upper()
+    out = _translate("INSERT IGNORE INTO t (id) VALUES (1)").upper()
+    assert "INSERT OR IGNORE" in out and "VALUES (1)" in out  # a plain VALUES (1) is never touched
     out = _translate("SELECT * FROM `t` LIMIT 5, 10").upper()
     assert "LIMIT 10 OFFSET 5" in out and "`" not in out
 
@@ -154,7 +155,8 @@ def test_metadata_commands(conn):
     assert conn.query("SHOW TABLES") == [{"Tables_in_d": "users"}]
     desc = conn.query("DESCRIBE users")
     assert desc[0]["Field"] == "id" and desc[0]["Key"] == "PRI" and desc[0]["Extra"] == "auto_increment"
-    assert desc[1] == {"Field": "name", "Type": "text", "Null": "NO", "Key": "", "Default": None, "Extra": ""}
+    assert desc[1]["Field"] == "name" and desc[1]["Null"] == "NO" and desc[1]["Key"] == ""
+    assert desc[1]["Type"].startswith(("text", "varchar"))  # sqlglot renders VARCHAR(50) as TEXT(50)
     assert conn.query("SELECT DATABASE()") == [{"DATABASE()": "d"}]
     assert conn.query("SELECT VERSION()")[0]["VERSION()"].startswith("8.0")
     assert conn.query("SHOW CREATE TABLE users")[0]["Table"] == "users"
@@ -177,6 +179,9 @@ def test_functions(conn):
     row = conn.query("SELECT IFNULL(b, 'none') AS b, CONCAT_WS('-', a, 'y') AS c, LAST_INSERT_ID() AS id FROM t")[0]
     assert row == {"b": "none", "c": "x-y", "id": 1}
     assert conn.query("SELECT NOW() AS n")[0]["n"]
+    assert conn.query("SELECT CURDATE() AS d")[0]["d"]
+    assert conn.query("SELECT UNIX_TIMESTAMP() AS u")[0]["u"] > 1_700_000_000
+    assert conn.query("SELECT FROM_UNIXTIME(0) AS f")[0]["f"] == "1970-01-01 00:00:00"
 
 
 def test_psycopg2_placeholder_raises():

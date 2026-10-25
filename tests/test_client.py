@@ -68,7 +68,7 @@ def test_fresh_connection_failure_is_not_retried(conn):
 def test_timeout_is_never_retried(conn):
     FakeConn.script = ["ok", "timeout"]
     conn.execute("SELECT 1")
-    with pytest.raises(Error, match="结果未知"):
+    with pytest.raises(Error, match="result unknown"):
         conn.execute("INSERT INTO t VALUES (1)")
     assert FakeConn.script == []  # 没有第三次尝试
 
@@ -76,7 +76,7 @@ def test_timeout_is_never_retried(conn):
 def test_read_phase_failure_is_not_retried(conn):
     FakeConn.script = ["ok", "reset_read"]
     conn.execute("SELECT 1")
-    with pytest.raises(Error, match="结果未知"):
+    with pytest.raises(Error, match="result unknown"):
         conn.execute("INSERT INTO t VALUES (1)")  # 服务端可能已执行,绝不重发
     assert len(FakeConn.sent) == 2
 

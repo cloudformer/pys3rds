@@ -81,7 +81,8 @@ def test_strict_table_rejects_wrong_type(db):
     status, data = call("POST", "/api/db/d/query",
                         {"sql": "INSERT INTO t (id, v) VALUES ('not-int', 'x')"})
     assert status == 400
-    assert "integer" in data["error"].lower()  # "cannot store TEXT value in INTEGER column"
+    err = data["error"].lower()  # "datatype mismatch" or "cannot store TEXT value in INTEGER column"
+    assert "mismatch" in err or "integer" in err
 
 
 def test_every_response_has_ms(db):

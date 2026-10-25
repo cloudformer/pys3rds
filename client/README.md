@@ -3,6 +3,8 @@
 **Python drivers for [s3rds](https://github.com/cloudformer/s3rds) — a truly serverless RDS:
 a Lambda URL as your database endpoint, SQLite on S3, ≈ $0 when idle.**
 
+![s3rds architecture](https://raw.githubusercontent.com/cloudformer/s3rds/main/docs/architecture.svg)
+
 Zero dependencies (standard library only). Each driver is a submodule **named after the standard
 client it mirrors**, so moving to a real database is a one-line import change and nothing else:
 

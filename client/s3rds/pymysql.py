@@ -174,9 +174,40 @@ def _result(columns, rows):
 
 # ---------------- dialect translation (sqlglot) + fixes sqlglot does not do ----------------
 
-_ON_DUP = re.compile(r"\bON\s+DUPLICATE\s+KEY\s+UPDATE\b", re.I)
-_VALUES_REF = re.compile(r"\bVALUES\s*\(\s*(\"?[\w]+\"?)\s*\)", re.I)
-_LAST_ID = re.compile(r"\bLAST_INSERT_ID\s*\(\s*\)", re.I)
+# sqlglot may leave "ON DUPLICATE KEY UPDATE" or render "ON DUPLICATE KEY DO UPDATE SET"
+_ON_DUP = re.compile(r"\bON\s+DUPLICATE\s+KEY(?:\s+DO)?\s+UPDATE(?:\s+SET)?\b", re.I)
+_UPSERT_SPLIT = re.compile(r"\bON\s+CONFLICT\s+DO\s+UPDATE\s+SET\b", re.I)
+_VALUES_REF = re.compile(r"\bVALUES\s*\(\s*(\"?[A-Za-z_]\w*\"?)\s*\)", re.I)  # VALUES(col), never VALUES(1)
+# LAST_INSERT_ID(): SQLite's last_insert_rowid() is per connection and the server opens one per
+# request, so the driver substitutes the id it saw on its own last INSERT (MySQL's per-session semantics)
+_LAST_ID_TOKEN = "__S3RDS_LAST_INSERT_ID__"
+
+# MySQL functions sqlglot does not map for SQLite. ONE table, one line per function:
+# MySQL name -> SQLite SQL template; {0} = first argument (defaults to 'now' when there is none).
+# A function missing here comes back as error 1305 "FUNCTION does not exist" -- add a line, nothing else.
+_FUNCS = {
+    "NOW": "CURRENT_TIMESTAMP",
+    "CURDATE": "CURRENT_DATE",
+    "CURTIME": "CURRENT_TIME",
+    "UNIX_TIMESTAMP": "CAST(strftime('%s', {0}) AS INTEGER)",
+    "FROM_UNIXTIME": "datetime({0}, 'unixepoch')",
+    "UNIX_TO_TIME": "datetime({0}, 'unixepoch')",   # sqlglot's own node name for FROM_UNIXTIME
+    "LAST_INSERT_ID": _LAST_ID_TOKEN,
+}
+
+
+def _rewrite_funcs(node):
+    if not isinstance(node, exp.Func):
+        return node
+    # unknown functions are exp.Anonymous whose real name is node.name; known ones answer to sql_name()
+    name = (node.name if isinstance(node, exp.Anonymous) else node.sql_name()).upper()
+    template = _FUNCS.get(name)
+    if template is None:
+        return node
+    args = node.expressions if isinstance(node, exp.Anonymous) else \
+        [v for v in node.args.values() if isinstance(v, exp.Expression)]
+    first = args[0].sql(dialect="sqlite") if args else "'now'"
+    return exp.maybe_parse(template.format(first), dialect="sqlite")
 
 
 def _fix_create_table(tree):
@@ -243,25 +274,41 @@ def _translate(sql):
     except ParseError as e:
         raise ProgrammingError(1064, f"You have an error in your SQL syntax ({e})") from None
     _fix_create_table(tree)
+    tree = tree.transform(_rewrite_funcs)
     out = tree.sql(dialect="sqlite")
-    out = _ON_DUP.sub("ON CONFLICT DO UPDATE SET", out)   # upsert, if sqlglot left MySQL syntax
-    out = _VALUES_REF.sub(r"excluded.\1", out)
-    out = _LAST_ID.sub("last_insert_rowid()", out)
+    out = _ON_DUP.sub("ON CONFLICT DO UPDATE SET", out)   # upsert
+    parts = _UPSERT_SPLIT.split(out, maxsplit=1)
+    if len(parts) == 2:  # VALUES(col) -> excluded.col, only inside the DO UPDATE SET clause
+        out = parts[0] + "ON CONFLICT DO UPDATE SET" + _VALUES_REF.sub(r"excluded.\1", parts[1])
     return out
 
 
 # ---------------- connection ----------------
 
 class Connection(_sqlite.Connection):
-    def execute(self, sql, params=()):
+    _last_insert_id = 0  # MySQL's per-session LAST_INSERT_ID()
+
+    def _prepare(self, sql):
         sql = sql.strip().rstrip(";")
         _check_supported(sql)
+        return sql
+
+    def _finalize(self, translated):
+        return translated.replace(_LAST_ID_TOKEN, str(self._last_insert_id))
+
+    def _remember(self, result):
+        if result.get("lastrowid"):
+            self._last_insert_id = result["lastrowid"]
+        return result
+
+    def execute(self, sql, params=()):
+        sql = self._prepare(sql)
         m = _META.match(sql)
         if m:
             return self._meta(m)
         qmark, args = _bind(sql, params)
         try:
-            return super().execute(_translate(qmark), args)
+            return self._remember(super().execute(self._finalize(_translate(qmark)), args))
         except _sqlite.Error as e:
             raise _map_error(e) from None
 
@@ -269,14 +316,15 @@ class Connection(_sqlite.Connection):
         prepared = []
         for s in statements:
             sql, params = (s, []) if isinstance(s, str) else (s[0], s[1] if len(s) > 1 else [])
-            sql = sql.strip().rstrip(";")
-            _check_supported(sql)
-            qmark, args = _bind(sql, params)
-            prepared.append((_translate(qmark), args))
+            qmark, args = _bind(self._prepare(sql), params)
+            prepared.append((self._finalize(_translate(qmark)), args))
         try:
-            return super().transaction(prepared)
+            results = super().transaction(prepared)
         except _sqlite.Error as e:
             raise _map_error(e) from None
+        for r in results:
+            self._remember(r)
+        return results
 
     def create_database(self):
         try:
