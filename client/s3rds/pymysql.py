@@ -70,7 +70,7 @@ _SQLITE_TO_MYSQL = [
     (r"UNIQUE constraint failed",      IntegrityError,   1062, "Duplicate entry"),
     (r"NOT NULL constraint failed",    IntegrityError,   1048, "Column cannot be null"),
     (r"FOREIGN KEY constraint failed", IntegrityError,   1452, "Cannot add or update a child row: a foreign key constraint fails"),
-    (r"CHECK constraint failed",       IntegrityError,   3819, "Check constraint is violated"),
+    (r"CHECK constraint failed",       OperationalError, 3819, "Check constraint is violated"),  # pymysql: OperationalError
     (r"no such table",                 ProgrammingError, 1146, "Table doesn't exist"),
     (r"no such column",                OperationalError, 1054, "Unknown column"),  # pymysql: OperationalError
     (r"already exists",                OperationalError, 1050, "Table already exists"),
@@ -141,8 +141,11 @@ def _bind(sql, params):
 
 _UNSUPPORTED = [
     (r"^\s*CREATE\s+(OR\s+REPLACE\s+)?(DEFINER\s*=\s*\S+\s+)?(PROCEDURE|FUNCTION|TRIGGER|EVENT)\b", "stored procedures / functions / triggers / events"),
+    (r"^\s*(DROP|ALTER)\s+(PROCEDURE|FUNCTION|TRIGGER|EVENT)\b", "stored procedures / functions / triggers / events"),
     (r"^\s*(CALL|LOCK\s+TABLES|UNLOCK\s+TABLES|GRANT|REVOKE|FLUSH)\b", "CALL / LOCK TABLES / GRANT / REVOKE / FLUSH"),
     (r"^\s*(CREATE|ALTER|DROP|RENAME)\s+USER\b", "user management"),
+    (r"^\s*SET\s+@[A-Za-z_]", "user variables (@x)"),
+    (r"^\s*(CREATE|ALTER)\s+TABLE\b.*\bPARTITION\s+BY\b", "table partitioning"),
     (r"\bFOR\s+UPDATE\s*;?\s*$|\bLOCK\s+IN\s+SHARE\s+MODE\s*;?\s*$", "SELECT ... FOR UPDATE / LOCK IN SHARE MODE"),
     (r"\bFULLTEXT\b", "FULLTEXT indexes"),
 ]
@@ -195,6 +198,7 @@ _FUNCS = {  # {0}, {1}, ... = arguments; {0} defaults to 'now' when the call has
     "FROM_UNIXTIME": "datetime({0}, 'unixepoch')",
     "UNIX_TO_TIME": "datetime({0}, 'unixepoch')",   # sqlglot's own node name for FROM_UNIXTIME
     "LAST_INSERT_ID": _LAST_ID_TOKEN,
+    "TRUNC": "(CAST(({0}) * POWER(10, {1}) AS INTEGER) / POWER(10, {1}))",   # TRUNCATE(x, d); sqlglot drops d
     "LEFT": "SUBSTR({0}, 1, {1})",
     "RIGHT": "SUBSTR({0}, MAX(LENGTH({0}) - ({1}), 0) + 1)",   # RIGHT(s, 0) = '', RIGHT(s, n > len) = s
 }
@@ -234,7 +238,8 @@ def _fix_create_table(tree):
             if len(cols) == 1:          # single-column PK: moved into the column (needed for AUTOINCREMENT)
                 table_pk_cols.add(cols[0])
                 continue
-        if isinstance(item, (exp.ColumnDef, exp.PrimaryKey, exp.ForeignKey)) or "Unique" in type(item).__name__:
+        if isinstance(item, (exp.ColumnDef, exp.PrimaryKey, exp.ForeignKey, exp.Constraint,
+                             exp.CheckColumnConstraint)) or "Unique" in type(item).__name__:
             kept.append(item)           # inline KEY/INDEX definitions are dropped (CREATE INDEX separately)
 
     for col in kept:
@@ -294,8 +299,15 @@ def _translate(sql):
 
 # ---------------- connection ----------------
 
+_INSERT_TARGET = re.compile(r"^\s*(?:INSERT|REPLACE)\b(?:\s+OR\s+\w+)?(?:\s+IGNORE)?\s+INTO\s+[`\"]?(\w+)", re.I)
+
+
 class Connection(_sqlite.Connection):
     _last_insert_id = 0  # MySQL's per-session LAST_INSERT_ID()
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._autoinc = {}   # table -> has AUTOINCREMENT (for MySQL-style lastrowid)
 
     def _prepare(self, sql):
         sql = sql.strip().rstrip(";")
@@ -305,7 +317,22 @@ class Connection(_sqlite.Connection):
     def _finalize(self, translated):
         return translated.replace(_LAST_ID_TOKEN, str(self._last_insert_id))
 
-    def _remember(self, result):
+    def _has_autoincrement(self, sql):
+        """MySQL reports lastrowid 0 unless the table has AUTO_INCREMENT; SQLite always has a rowid."""
+        m = _INSERT_TARGET.match(sql)
+        if not m:
+            return False
+        table = m.group(1)
+        if table not in self._autoinc:
+            r = self._raw("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?", [table])
+            self._autoinc[table] = bool(r["rows"]) and "AUTOINCREMENT" in r["rows"][0][0].upper()
+        return self._autoinc[table]
+
+    def _remember(self, result, sql=""):
+        if not sql.lstrip()[:6].upper() in ("INSERT", "UPDATE", "DELETE", "SELECT", "REPLAC"):
+            self._autoinc.clear()   # DDL may have changed a table
+        if result.get("lastrowid") and not result.get("columns") and not self._has_autoincrement(sql):
+            result["lastrowid"] = 0
         # multi-row INSERT: MySQL's lastrowid is the FIRST generated id, SQLite's the last
         if result.get("lastrowid") and result.get("rowcount", 0) > 1 and not result.get("columns"):
             result["lastrowid"] = result["lastrowid"] - result["rowcount"] + 1
@@ -331,10 +358,10 @@ class Connection(_sqlite.Connection):
                 ("DELETE FROM sqlite_sequence WHERE name = ?", [table]),
             ])
             return self._remember({"columns": [], "rows": [], "rowcount": 0, "lastrowid": None,
-                                   "ms": self.last.get("ms"), "s3": self.last.get("s3")})
+                                   "ms": self.last.get("ms"), "s3": self.last.get("s3")}, sql)
         qmark, args = _bind(sql, params)
         try:
-            return self._remember(super().execute(self._finalize(_translate(qmark)), args))
+            return self._remember(super().execute(self._finalize(_translate(qmark)), args), sql)
         except _sqlite.Error as e:
             raise _map_error(e) from None
 
@@ -348,8 +375,8 @@ class Connection(_sqlite.Connection):
             results = super().transaction(prepared)
         except _sqlite.Error as e:
             raise _map_error(e) from None
-        for r in results:
-            self._remember(r)
+        for r, (sql, _) in zip(results, prepared):
+            self._remember(r, sql)
         return results
 
     def create_database(self):
@@ -364,6 +391,17 @@ class Connection(_sqlite.Connection):
             return _sqlite.Connection.execute(self, sql, params)
         except _sqlite.Error as e:
             raise _map_error(e) from None
+
+    def _indexes(self, table):
+        """[(name, unique, [columns])] excluding the primary key; SQLite's auto index for an inline
+        UNIQUE is named after its column, as MySQL does."""
+        out = []
+        for _seq, name, unique, origin, _partial in self._raw(f'PRAGMA index_list("{table}")')["rows"]:
+            if origin == "pk":
+                continue
+            cols = [c for _s, _cid, c in self._raw(f'PRAGMA index_info("{name}")')["rows"]]
+            out.append((cols[0] if name.startswith("sqlite_autoindex_") else name, bool(unique), cols))
+        return out
 
     def _meta(self, m):
         if m.group("tables"):
@@ -380,11 +418,14 @@ class Connection(_sqlite.Connection):
             info = self._raw(f'PRAGMA table_info("{table}")')["rows"]
             if not info:
                 raise ProgrammingError(1146, f"Table '{table}' doesn't exist")
+            keys = {}   # column -> UNI / MUL from the first index that starts with it, like MySQL
+            for _n, _u, cols in self._indexes(table):
+                keys.setdefault(cols[0], "UNI" if _u else "MUL")
             rows = []
             for _cid, name, ctype, notnull, default, pk in info:
                 auto = "auto_increment" if pk and (ctype or "").upper() == "INTEGER" else ""
                 rows.append([name, (ctype or "").lower(), "NO" if notnull else "YES",
-                             "PRI" if pk else "", default, auto])
+                             "PRI" if pk else keys.get(name, ""), default, auto])
             return _result(["Field", "Type", "Null", "Key", "Default", "Extra"], rows)
         if m.group("create"):
             table = m.group("create")
@@ -394,10 +435,13 @@ class Connection(_sqlite.Connection):
             return _result(["Table", "Create Table"], [[table, r["rows"][0][0]]])
         if m.group("index"):
             table = m.group("index")
-            rows = []
-            for _seq, name, unique, _origin, _partial in self._raw(f'PRAGMA index_list("{table}")')["rows"]:
-                for seqno, _cid, colname in self._raw(f'PRAGMA index_info("{name}")')["rows"]:
-                    rows.append([table, 0 if unique else 1, name, seqno + 1, colname])
+            info = self._raw(f'PRAGMA table_info("{table}")')["rows"]
+            if not info:
+                raise ProgrammingError(1146, f"Table '{table}' doesn't exist")
+            pk = [(r[1], r[5]) for r in info if r[5]]
+            rows = [[table, 0, "PRIMARY", seq, name] for name, seq in sorted(pk, key=lambda x: x[1])]
+            for name, unique, cols in self._indexes(table):
+                rows += [[table, 0 if unique else 1, name, i + 1, c] for i, c in enumerate(cols)]
             return _result(["Table", "Non_unique", "Key_name", "Seq_in_index", "Column_name"], rows)
         if m.group("version"):
             return _result(["VERSION()"], [[f"8.0.0-s3rds-{__version__}"]])

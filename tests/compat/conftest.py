@@ -90,6 +90,9 @@ def in_process(module, fake_s3, monkeypatch, bucket):
 @pytest.fixture
 def real_mysql():
     dsn = os.environ.get("MYSQL_DSN")
+    if not dsn and os.environ.get("COMPAT_DRY"):
+        yield None, None   # dry run: execute the s3rds side only and print what it does (no Docker needed)
+        return
     if not dsn:
         pytest.skip("set MYSQL_DSN (see tests/compat/docker-compose.yml) to run against a real MySQL")
     pymysql = pytest.importorskip("pymysql")
@@ -114,19 +117,38 @@ def s3_mysql(fake_s3, monkeypatch, bucket):
 def mysql_pair(real_mysql, s3_mysql):
     """(run_on_both) -> executes a script on both sides and compares step by step."""
     (real, real_cur), (ours, ours_cur) = real_mysql, s3_mysql
+    dry = real is None
+
+    def both(sql, params=()):
+        o = run_step(ours, ours_cur, sql, params)
+        if dry:
+            print(f"  {'ERR ' + str(o.error) if o.error else 'ok  '} {sql[:90]}")
+            return o, o
+        return run_step(real, real_cur, sql, params), o
 
     def run(script):
         for step in script:
-            sql, params = step[0], step[1]
-            compare(step, run_step(real, real_cur, sql, params), run_step(ours, ours_cur, sql, params))
-    run.both = lambda sql, params=(): (run_step(real, real_cur, sql, params), run_step(ours, ours_cur, sql, params))
+            r, o = both(step[0], step[1])
+            if not dry:
+                compare(step, r, o)
+    run.both = both
 
     def unsupported(sql, params=()):
         """MySQL runs it; s3rds must refuse it with NotSupportedError (never silently do something else)."""
-        r, o = run.both(sql, params)
-        assert r.error is None, f"reference MySQL rejected the statement itself: {r.error}"
+        r, o = both(sql, params)
+        assert dry or r.error is None, f"reference MySQL rejected the statement itself: {r.error}"
         assert o.error and o.error[0] == "NotSupportedError", f"{sql}\n  s3rds did not refuse: {o.error or o.rows}"
     run.unsupported = unsupported
+
+    def many(sql, seq):
+        """executemany on both sides; rowcount must be the total."""
+        counts = []
+        for conn, cur_cls in ([(ours, ours_cur)] if dry else [(real, real_cur), (ours, ours_cur)]):
+            with conn.cursor(cur_cls) as cur:
+                cur.executemany(sql, seq)
+                counts.append(cur.rowcount)
+        assert len(set(counts)) == 1, f"executemany rowcount real={counts[0]} s3rds={counts[-1]}"
+    run.many = many
     return run
 
 

@@ -5,6 +5,8 @@ No translation is involved, so every case here must pass; a failure is a driver 
 import datetime
 import decimal
 
+import pytest
+
 T = "DROP TABLE IF EXISTS t"
 
 
@@ -105,6 +107,18 @@ def test_subqueries_union_case(sqlite_pair):
         ("SELECT name, CASE WHEN score >= 2 THEN 'high' ELSE 'low' END AS tier, COALESCE(doc, '-') AS d FROM t ORDER BY id", []),
         ("SELECT json_extract(doc, '$.k') AS k FROM t WHERE id = 1", []),
         ("INSERT INTO t (id, name, score) VALUES (9, 'z', 'not-an-int')", []),   # STRICT rejects
+    ])
+
+
+@pytest.mark.xfail(strict=True, reason="task 13: bytes parameters are rejected and BLOB results come back as text")
+def test_blob_round_trip(sqlite_pair):
+    """Types | BLOB values round-trip as bytes | task 13"""
+    sqlite_pair([
+        (T, []),
+        ("CREATE TABLE t (b BLOB) STRICT", []),
+        ("INSERT INTO t (b) VALUES (?)", [b"\x00\x01\xff"]),
+        ("INSERT INTO t (b) VALUES (X'0203')", []),
+        ("SELECT b FROM t ORDER BY rowid", []),
     ])
 
 

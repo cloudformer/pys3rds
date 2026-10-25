@@ -136,7 +136,7 @@ def test_mysql_error_codes(conn):
     with pytest.raises(IntegrityError) as e:
         conn.execute("INSERT INTO users (email) VALUES ('c')")  # name NOT NULL
     assert e.value.code == 1048
-    with pytest.raises(IntegrityError) as e:
+    with pytest.raises(OperationalError) as e:  # pymysql's class for 3819 (verified against MySQL 8.0)
         conn.execute("INSERT INTO users (name, status) VALUES ('c', 'weird')")  # ENUM -> CHECK
     assert e.value.code == 3819
 
@@ -173,7 +173,7 @@ def test_transaction_all_or_nothing(conn):
 
 
 def test_functions(conn):
-    conn.execute("CREATE TABLE t (a VARCHAR(10), b VARCHAR(10))")
+    conn.execute("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, a VARCHAR(10), b VARCHAR(10))")
     conn.execute("INSERT INTO t (a, b) VALUES ('x', NULL)")
     row = conn.query("SELECT IFNULL(b, 'none') AS b, CONCAT_WS('-', a, 'y') AS c, LAST_INSERT_ID() AS id FROM t")[0]
     assert row == {"b": "none", "c": "x-y", "id": 1}

@@ -64,6 +64,10 @@ def pytest_runtest_logreport(report):
         outcomes[report.nodeid] = "not run"
     elif report.when == "call":
         xfail = hasattr(report, "wasxfail")
+        if report.outcome == "failed":   # keep the real-vs-s3rds lines so the report shows the actual difference
+            text = report.longreprtext
+            lines = [ln.strip() for ln in text.splitlines() if ln.strip().startswith(("real:", "s3rds:", "E   "))]
+            features[report.nodeid]["fail"] = " ".join(lines)[:800] or text.strip().splitlines()[-1][:800]
         outcomes[report.nodeid] = (
             "quirk" if report.outcome == "skipped" and xfail and features[report.nodeid]["quirk"] else
             "gap" if report.outcome == "skipped" and xfail else        # xfailed
@@ -78,7 +82,10 @@ def _counts(kind):
         if f["suite"] == kind:
             o = outcomes.get(nid, "not run")
             c[o] = c.get(o, 0) + 1
-    return " · ".join(f"{n} {k}" for k, n in sorted(c.items()))
+    total = sum(c.values())
+    supported = c.get("verified", 0) + c.get("quirk", 0) + c.get("fixed", 0)
+    pct = f"**Support {100 * supported // total}%** ({supported} / {total} features) · " if total else ""
+    return pct + " · ".join(f"{n} {k}" for k, n in sorted(c.items()))
 
 
 def render():
@@ -93,7 +100,8 @@ def render():
         f"Generated {datetime.date.today()} by `pytest tests` · s3rds {s3rds.__version__} · "
         f"sqlglot {sg} · Python {platform.python_version()}", "",
         "Each row is one feature exercised with the same SQL on the reference database and on s3rds; "
-        "results, Python types, rowcount, lastrowid and error codes must match.", "",
+        "results, Python types, rowcount, lastrowid and error codes must match. The feature list only grows "
+        "(a removed case would show in git), so the support percentage can only move up.", "",
         f"Whole test run: **{suite['passed']} passed**, {suite['failed']} failed, "
         f"{suite['xfailed']} expected failures (known gaps), {suite['skipped']} skipped "
         "— regression suite (`tests/`) and compatibility suite (`tests/compat/`) together.", "",
@@ -108,6 +116,8 @@ def render():
         for nid, f in rows:
             parts = [p.strip() for p in f["feature"].split(" | ")]
             cat, feat, note = (parts + ["", ""])[:3] if len(parts) >= 2 else ("General", parts[0], "")
+            if f.get("fail"):
+                note = f["fail"].replace("|", "\\|")
             groups.setdefault(cat, []).append((nid, feat, note))
         lines += ["| Feature | Status | Note |", "|---|---|---|"]
         for cat in sorted(groups, key=lambda c: (CATEGORY_ORDER.index(c) if c in CATEGORY_ORDER else 99, c)):
