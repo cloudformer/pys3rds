@@ -1,4 +1,4 @@
-# s3rds compatibility report
+# s3rds compatibility report · [tasks](TASKS.md)
 
 Generated 2026-10-25 by `pytest tests` · s3rds 0.1.1 · sqlglot 30.24.0 · Python 3.13.7
 

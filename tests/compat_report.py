@@ -97,7 +97,7 @@ def render():
     except ImportError:
         sg = "not installed"
     lines = [
-        "# s3rds compatibility report", "",
+        "# s3rds compatibility report · [tasks](TASKS.md)", "",
         f"Generated {datetime.date.today()} by `pytest tests` · s3rds {s3rds.__version__} · "
         f"sqlglot {sg} · Python {platform.python_version()}", "",
         "Each row is one feature exercised with the same SQL on the reference database and on s3rds; "
