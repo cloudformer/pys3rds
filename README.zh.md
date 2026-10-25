@@ -187,7 +187,12 @@ pytest tests/ -v
 - `ENGINE=`、`CHARSET=`、`COMMENT`、`ON UPDATE CURRENT_TIMESTAMP` 会被丢弃
 
 不支持的——抛 `NotSupportedError`，绝不静默出错：存储过程/函数、触发器、`FULLTEXT`、
-`SELECT … FOR UPDATE`、`LOCK TABLES`、`GRANT`/用户管理。结果值按存储原样返回（暂无 `DATETIME` → `datetime` 转换）。
+`SELECT … FOR UPDATE`、`LOCK TABLES`、`GRANT`/用户管理。
+
+结果类型和 pymysql 一致：`DATETIME` → `datetime`、`DATE` → `date`、`TIME` → `timedelta`、`DECIMAL` /
+`SUM` / `AVG` / 整数除法 → `Decimal`、`BLOB` → `bytes`（双向）、`NOW()` → `datetime`。
+模拟严格模式：`'abc'` 插进 `INT` 列报 1366。`DESCRIBE` 和 `SHOW CREATE TABLE` 显示你声明的 MySQL 类型
+（存在库里一张小表 `_s3rds_columns`）。
 
 **兼容性报告 —— [tests/compat/REPORT.md](tests/compat/REPORT.md)。** 上面每一项能力对应一个测试：同一条 SQL
 在 Docker 里的真 MySQL 8.0 和 s3rds 上各跑一遍，比对结果、Python 类型、rowcount、lastrowid 和错误码。

@@ -147,8 +147,9 @@ def test_parameter_round_trip(conn, value, stored):
 
 def test_unencodable_parameters_raise_s3rds_error(conn):
     conn.execute("CREATE TABLE t (v ANY) STRICT")
-    with pytest.raises(sqlite.Error, match="parameter #1: binary"):
-        conn.execute("INSERT INTO t (v) VALUES (?)", [b"\x00\x01"])
+    conn.execute("INSERT INTO t (v) VALUES (?)", [b"\x00\x01"])            # bytes travel as {"$b": base64}
+    assert conn.query("SELECT v FROM t") == [{"v": b"\x00\x01"}]
+    conn.execute("DELETE FROM t")
 
     class Thing:
         pass

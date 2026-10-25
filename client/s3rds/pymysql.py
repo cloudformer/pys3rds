@@ -26,8 +26,12 @@ What is translated (client side, cached per statement):
 
 Not supported, raised as NotSupportedError (never silently wrong): stored procedures/functions,
 triggers, FULLTEXT, SELECT ... FOR UPDATE, LOCK TABLES, GRANT/REVOKE/users.
-Values are returned as stored (no DATETIME -> datetime.datetime conversion in this version).
+Result types follow pymysql: DATETIME/DATE/TIME/DECIMAL columns (marked by the server from the declared
+type), SUM/AVG/division as Decimal, NOW() as datetime, BLOB as bytes. MySQL column types are kept in the
+_s3rds_columns table so DESCRIBE / SHOW CREATE TABLE show what was declared.
 """
+import datetime
+import decimal
 import functools
 import re
 
@@ -73,6 +77,7 @@ _SQLITE_TO_MYSQL = [
     (r"UNIQUE constraint failed",      IntegrityError,   1062, "Duplicate entry"),
     (r"NOT NULL constraint failed",    IntegrityError,   1048, "Column cannot be null"),
     (r"FOREIGN KEY constraint failed", IntegrityError,   1452, "Cannot add or update a child row: a foreign key constraint fails"),
+    (r"CHECK constraint failed: s3rds_type", DataError, 1366, "Incorrect value for column"),  # our typeof() checks
     (r"CHECK constraint failed",       OperationalError, 3819, "Check constraint is violated"),  # pymysql: OperationalError
     (r"no such table",                 ProgrammingError, 1146, "Table doesn't exist"),
     (r"no such column",                OperationalError, 1054, "Unknown column"),  # pymysql: OperationalError
@@ -283,12 +288,12 @@ _FUNCS = {
 # information_schema views, answered from sqlite_master / PRAGMA table-valued functions
 _INFORMATION_SCHEMA = {
     "tables": (f"SELECT name AS table_name, '{_DATABASE_TOKEN}' AS table_schema, 'BASE TABLE' AS table_type, "
-               "'InnoDB' AS engine FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"),
+               "'InnoDB' AS engine FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_s3rds_%'"),
     "columns": (f"SELECT m.name AS table_name, '{_DATABASE_TOKEN}' AS table_schema, p.name AS column_name, "
                 "p.cid + 1 AS ordinal_position, LOWER(p.type) AS column_type, LOWER(p.type) AS data_type, "
                 "CASE WHEN p.\"notnull\" THEN 'NO' ELSE 'YES' END AS is_nullable, p.dflt_value AS column_default, "
                 "CASE WHEN p.pk THEN 'PRI' ELSE '' END AS column_key "
-                "FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'"),
+                "FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%' AND m.name NOT LIKE '_s3rds_%'"),
 }
 
 
@@ -317,6 +322,33 @@ def _rewrite_funcs(node):
 
 _UNSIGNED = {"UINT": "INT", "UBIGINT": "BIGINT", "USMALLINT": "SMALLINT", "UTINYINT": "TINYINT",
              "UMEDIUMINT": "MEDIUMINT", "UDECIMAL": "DECIMAL", "UDOUBLE": "DOUBLE"}
+_INT_TYPES = {"INT", "BIGINT", "SMALLINT", "TINYINT", "MEDIUMINT", "BOOLEAN"}
+_REAL_TYPES = {"DECIMAL", "FLOAT", "DOUBLE"}
+# MySQL column types are kept in this table so DESCRIBE / SHOW CREATE TABLE show what the user wrote
+META = "_s3rds_columns"
+_META_DDL = f'CREATE TABLE IF NOT EXISTS "{META}" (tbl TEXT, col TEXT, type TEXT, extra TEXT, PRIMARY KEY (tbl, col))'
+_HIDDEN = f"name NOT LIKE '{META}'"
+
+
+def _q(text):
+    return "'" + str(text).replace("'", "''") + "'"
+
+
+def _mysql_type(kind):
+    text = kind.sql(dialect="mysql").lower().replace(", ", ",")
+    return {"boolean": "tinyint(1)", "timestamptz": "timestamp"}.get(text, text)
+
+
+def _type_check(col, kind):
+    """MySQL strict mode rejects 'abc' in an INT column; SQLite stores it. A named CHECK reproduces the error (1366)."""
+    name = kind.this.name
+    if name == "USERDEFINED":
+        name = str(kind.args.get("kind") or "").split("(")[0].upper()
+    allowed = "'integer', 'null'" if name in _INT_TYPES else "'integer', 'real', 'null'" if name in _REAL_TYPES else None
+    if allowed is None:
+        return None
+    return exp.Constraint(this=exp.to_identifier(f"s3rds_type_{col}"),
+                          expressions=[exp.CheckColumnConstraint(this=exp.condition(f'TYPEOF("{col}") IN ({allowed})'))])
 _DROPPED_CONSTRAINTS = (exp.OnUpdateColumnConstraint, exp.CharacterSetColumnConstraint,
                         exp.CommentColumnConstraint, exp.CollateColumnConstraint)
 
@@ -336,8 +368,14 @@ def _fix_create_table(tree):
         return []
     tree.set("properties", None)  # ENGINE=, CHARSET=, COMMENT=, ...
     table = schema.this.name
+    meta = [_META_DDL, f'DELETE FROM "{META}" WHERE tbl = {_q(table)}']
+    for item in schema.expressions:
+        if isinstance(item, exp.ColumnDef) and item.args.get("kind") is not None:
+            auto = any(isinstance(c.kind, exp.AutoIncrementColumnConstraint) for c in item.args.get("constraints") or [])
+            meta.append(f'INSERT INTO "{META}" VALUES ({_q(table)}, {_q(item.name)}, {_q(_mysql_type(item.args["kind"]))}, '
+                        f'{_q("auto_increment" if auto else "")})')
 
-    kept, indexes, table_pk_cols = [], [], set()
+    kept, indexes, checks, table_pk_cols = [], [], [], set()
     for item in schema.expressions:
         if isinstance(item, exp.PrimaryKey):
             cols = [c.name for c in item.expressions]
@@ -360,6 +398,14 @@ def _fix_create_table(tree):
         kind = col.args.get("kind")
         if kind is not None and kind.this.name in _UNSIGNED:
             col.set("kind", exp.DataType.build(_UNSIGNED[kind.this.name]))
+            kind = col.args["kind"]
+        # keep DECIMAL / TIMESTAMP as the declared type (sqlglot would write REAL / TIMESTAMPTZ): the server
+        # marks result values by the declared type, so the driver can hand back Decimal / datetime
+        if kind is not None and kind.this == exp.DataType.Type.DECIMAL:
+            col.set("kind", exp.DataType(this=exp.DataType.Type.USERDEFINED, kind=kind.sql(dialect="mysql")))
+            kind = col.args["kind"]
+        elif kind is not None and kind.this == exp.DataType.Type.TIMESTAMPTZ:
+            col.set("kind", exp.DataType(this=exp.DataType.Type.USERDEFINED, kind="TIMESTAMP"))
             kind = col.args["kind"]
         all_constraints = col.args.get("constraints") or []
         binary = any(isinstance(c.kind, exp.CollateColumnConstraint) and c.kind.this.name.lower().endswith(("_bin", "_cs"))
@@ -390,9 +436,38 @@ def _fix_create_table(tree):
         if is_auto:
             tail.append(exp.ColumnConstraint(kind=exp.AutoIncrementColumnConstraint()))  # must follow PRIMARY KEY
         col.set("constraints", others + tail)
+        if kind is not None and not is_auto:
+            check = _type_check(col.name, kind)
+            if check is not None:
+                checks.append(check)
 
-    schema.set("expressions", kept)
-    return indexes
+    schema.set("expressions", kept + checks)
+    return indexes + meta
+
+
+def _meta_stmts(tree):
+    """Statements that keep the MySQL column-type table in step with a DDL statement."""
+    if isinstance(tree, exp.Drop) and (tree.args.get("kind") or "").upper() == "TABLE":
+        return [_META_DDL] + [f'DELETE FROM "{META}" WHERE tbl = {_q(t.name)}' for t in tree.args.get("tables") or []]
+    if not isinstance(tree, exp.Alter):
+        return []
+    table = tree.this.name
+    out = [_META_DDL]
+    for action in tree.args.get("actions") or []:
+        if isinstance(action, exp.ColumnDef) and action.args.get("kind") is not None:      # ADD COLUMN
+            out.append(f'INSERT OR REPLACE INTO "{META}" VALUES ({_q(table)}, {_q(action.name)}, '
+                       f'{_q(_mysql_type(action.args["kind"]))}, \'\')')
+        elif isinstance(action, exp.Drop):                                                  # DROP COLUMN
+            out += [f'DELETE FROM "{META}" WHERE tbl = {_q(table)} AND col = {_q(c.name)}' for c in action.args.get("tables") or []]
+        elif isinstance(action, exp.RenameColumn):
+            out.append(f'UPDATE "{META}" SET col = {_q(action.args["to"].name)} WHERE tbl = {_q(table)} AND col = {_q(action.this.name)}')
+        elif isinstance(action, exp.AlterRename):
+            out.append(f'UPDATE "{META}" SET tbl = {_q(action.this.name)} WHERE tbl = {_q(table)}')
+        elif isinstance(action, exp.ModifyColumn) and action.this.args.get("kind") is not None:   # MODIFY / CHANGE
+            old = action.args.get("rename_from")
+            where = f'tbl = {_q(table)} AND col = {_q(old.name if old is not None else action.this.name)}'
+            out.append(f'UPDATE "{META}" SET col = {_q(action.this.name)}, type = {_q(_mysql_type(action.this.args["kind"]))} WHERE {where}')
+    return out
 
 
 def _fix_alter(tree):
@@ -402,13 +477,13 @@ def _fix_alter(tree):
         return None
     out = []
     for action in tree.args.get("actions") or []:
-        if isinstance(action, exp.ModifyColumn) if hasattr(exp, "ModifyColumn") else False:
+        if isinstance(action, exp.ModifyColumn):
             old = action.args.get("rename_from")
             if old is not None and old.name != action.this.name:
                 out.append(f'ALTER TABLE "{tree.this.name}" RENAME COLUMN "{old.name}" TO "{action.this.name}"')
         else:
             return None   # anything else: let sqlglot render it
-    return out
+    return out + _meta_stmts(tree)
 
 
 def _fix_insert(tree):
@@ -474,7 +549,9 @@ def _translate_stmts(sql):
         raise NotSupportedError(0, "the MySQL dialect needs sqlglot: pip install 's3rds[mysql]'")
     m = _RENAME_TABLE.match(sql)
     if m:
-        return tuple(f'ALTER TABLE "{a}" RENAME TO "{b}"' for a, b in _RENAME_PAIR.findall(m.group(1)))
+        pairs = _RENAME_PAIR.findall(m.group(1))
+        return tuple([f'ALTER TABLE "{a}" RENAME TO "{b}"' for a, b in pairs] + [_META_DDL]
+                     + [f'UPDATE "{META}" SET tbl = {_q(b)} WHERE tbl = {_q(a)}' for a, b in pairs])
     m = _CREATE_INDEX.match(sql)
     if m:
         sql = _CREATE_INDEX.sub(lambda m: f'CREATE {m.group(1) or ""}INDEX "{m.group(3)}__{m.group(2)}" ON "{m.group(3)}"', sql, 1)
@@ -489,14 +566,56 @@ def _translate_stmts(sql):
         rewritten = fix(tree)
         if rewritten is not None:
             return tuple(rewritten) if isinstance(rewritten, list) else (rewritten,)
-    indexes = _fix_create_table(tree)
+    extra = _fix_create_table(tree) + _meta_stmts(tree)
     tree = tree.transform(_rewrite_funcs)
     out = tree.sql(dialect="sqlite")
     out = _ON_DUP.sub("ON CONFLICT DO UPDATE SET", out)   # upsert
     parts = _UPSERT_SPLIT.split(out, maxsplit=1)
     if len(parts) == 2:  # VALUES(col) -> excluded.col, only inside the DO UPDATE SET clause
         out = parts[0] + "ON CONFLICT DO UPDATE SET" + _VALUES_REF.sub(r"excluded.\1", parts[1])
-    return (out, *indexes)
+    return (out, *extra)
+
+
+# ---------------- result types MySQL reports but SQLite cannot know ----------------
+# Column types come from the server (declared type markers). For expressions the SQL itself decides:
+# SUM / AVG over an integer or DECIMAL column and integer division are Decimal, NOW() is a datetime.
+
+def _expr_tag(node):
+    if isinstance(node, (exp.Sum, exp.Avg)):
+        col = node.this
+        return ("agg", col.name if isinstance(col, exp.Column) else None)
+    if isinstance(node, exp.Div):
+        cols = [x.name for x in (node.this, node.expression) if isinstance(x, exp.Column)]
+        lits = [x for x in (node.this, node.expression) if isinstance(x, exp.Literal)]
+        if any(not x.is_string and ("." in x.name or "e" in x.name.lower()) for x in lits):
+            return None   # a float literal makes the whole division a float, as in MySQL
+        return ("div", cols)
+    if isinstance(node, exp.CurrentTimestamp) or isinstance(node, exp.Anonymous) and node.name.upper() in ("NOW", "SYSDATE"):
+        return ("datetime", None)
+    if isinstance(node, exp.CurrentDate) or isinstance(node, exp.Anonymous) and node.name.upper() == "CURDATE":
+        return ("date", None)
+    if isinstance(node, exp.CurrentTime) or isinstance(node, exp.Anonymous) and node.name.upper() == "CURTIME":
+        return ("time", None)
+    return None
+
+
+@functools.lru_cache(maxsize=1024)
+def _result_tags(sql):
+    """(tags per select column, tables used) or None when the statement is not a plain SELECT."""
+    try:
+        tree = sqlglot.parse_one(sql, read="mysql")
+    except ParseError:
+        return None
+    if not isinstance(tree, exp.Select):
+        return None
+    tags = tuple(_expr_tag(e.this if isinstance(e, exp.Alias) else e) for e in tree.expressions)
+    if not any(tags):
+        return None
+    return tags, tuple(t.name for t in tree.find_all(exp.Table))
+
+
+def _to_timedelta(t):
+    return datetime.timedelta(hours=t.hour, minutes=t.minute, seconds=t.second, microseconds=t.microsecond)
 
 
 def _translate(sql):
@@ -511,10 +630,63 @@ _INSERT_TARGET = re.compile(r"^\s*(?:INSERT|REPLACE)\b(?:\s+OR\s+\w+)?(?:\s+IGNO
 
 class Connection(_sqlite.Connection):
     _last_insert_id = 0  # MySQL's per-session LAST_INSERT_ID()
+    _typed = True        # the server marks DATETIME / DATE / TIME / DECIMAL columns
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
         self._autoinc = {}   # table -> has AUTOINCREMENT (for MySQL-style lastrowid)
+        self._coltypes = {}  # table -> {column: MySQL type} (for aggregate result types)
+
+    def _types_of(self, table):
+        if table not in self._coltypes:
+            try:
+                rows = self._raw(f'SELECT col, type FROM "{META}" WHERE tbl = ?', [table])["rows"]
+            except ProgrammingError:
+                rows = []
+            self._coltypes[table] = {c: t for c, t in rows}
+        return self._coltypes[table]
+
+    def _column_type(self, tables, col):
+        for t in tables:
+            ty = self._types_of(t).get(col)
+            if ty:
+                return ty
+        return ""
+
+    def _type_results(self, result, sql):
+        """Apply MySQL result types: markers from the server are already decoded by the base driver;
+        TIME is a timedelta in pymysql; SUM / AVG / division become Decimal by the SQL's shape."""
+        rows = result.get("rows") or []
+        if not rows:
+            return
+        if any(isinstance(v, datetime.time) for v in rows[0]):
+            result["rows"] = rows = [[_to_timedelta(v) if isinstance(v, datetime.time) else v for v in r] for r in rows]
+        found = _result_tags(sql)
+        if not found or len(found[0]) != len(result.get("columns") or []):
+            return
+        tags, tables = found
+        conv = {}
+        for i, tag in enumerate(tags):
+            if not tag:
+                continue
+            kind, arg = tag
+            if kind == "agg":
+                ty = self._column_type(tables, arg) if arg else ""
+                if ty.split("(")[0] in ("float", "double", "real"):
+                    continue
+                conv[i] = lambda v: decimal.Decimal(str(v)) if isinstance(v, (int, float)) else v
+            elif kind == "div":
+                if any(self._column_type(tables, c).split("(")[0] in ("float", "double", "real") for c in arg):
+                    continue
+                conv[i] = lambda v: decimal.Decimal(str(v)) if isinstance(v, (int, float)) else v
+            elif kind == "datetime":
+                conv[i] = lambda v: datetime.datetime.fromisoformat(v) if isinstance(v, str) else v
+            elif kind == "date":
+                conv[i] = lambda v: datetime.date.fromisoformat(v) if isinstance(v, str) else v
+            elif kind == "time":
+                conv[i] = lambda v: _to_timedelta(datetime.time.fromisoformat(v)) if isinstance(v, str) else v
+        if conv:
+            result["rows"] = [[conv[i](v) if i in conv and v is not None else v for i, v in enumerate(r)] for r in rows]
 
     def _prepare(self, sql):
         sql = sql.strip().rstrip(";")
@@ -541,6 +713,9 @@ class Connection(_sqlite.Connection):
     def _remember(self, result, sql=""):
         if not sql.lstrip()[:6].upper() in ("INSERT", "UPDATE", "DELETE", "SELECT", "REPLAC"):
             self._autoinc.clear()   # DDL may have changed a table
+            self._coltypes.clear()
+        if result.get("columns"):
+            self._type_results(result, sql)
         if result.get("lastrowid") and not result.get("columns") and not self._has_autoincrement(sql):
             result["lastrowid"] = 0
         # multi-row INSERT: MySQL's lastrowid is the FIRST generated id, SQLite's the last
@@ -627,9 +802,52 @@ class Connection(_sqlite.Connection):
             out.append((shown, bool(unique), cols))
         return out
 
+    def _describe(self, table, info):
+        """DESCRIBE rows from PRAGMA table_info + the MySQL types we stored at CREATE TABLE."""
+        types = self._types_of(table)
+        extras = {}
+        try:
+            extras = {c: e for c, e in self._raw(f'SELECT col, extra FROM "{META}" WHERE tbl = ?', [table])["rows"]}
+        except ProgrammingError:
+            pass
+        keys = {}   # column -> UNI / MUL from the first index that starts with it, like MySQL
+        for _n, _u, cols in self._indexes(table):
+            keys.setdefault(cols[0], "UNI" if _u else "MUL")
+        rows = []
+        for _cid, name, ctype, notnull, default, pk in info:
+            auto = extras.get(name) or ("auto_increment" if pk and (ctype or "").upper() == "INTEGER" else "")
+            if isinstance(default, str) and len(default) >= 2 and default[0] == default[-1] == "'":
+                default = default[1:-1].replace("''", "'")
+            rows.append([name, types.get(name) or (ctype or "").lower(), "NO" if notnull or pk else "YES",
+                         "PRI" if pk else keys.get(name, ""), default, auto])
+        return rows
+
+    def _create_table(self, table, info):
+        """SHOW CREATE TABLE in MySQL's layout, from the same metadata DESCRIBE uses."""
+        lines = []
+        pk = []
+        for name, ctype, null, key, default, extra in self._describe(table, info):
+            line = f"  `{name}` {ctype}"
+            if null == "NO":
+                line += " NOT NULL"
+            if default is not None:
+                line += f" DEFAULT {default}" if default.upper() == "CURRENT_TIMESTAMP" else f" DEFAULT '{default}'"
+            elif null == "YES":
+                line += " DEFAULT NULL"
+            if extra:
+                line += f" {extra.upper()}"
+            lines.append(line)
+            if key == "PRI":
+                pk.append(name)
+        if pk:
+            lines.append("  PRIMARY KEY (" + ", ".join(f"`{c}`" for c in pk) + ")")
+        for name, unique, cols in self._indexes(table):
+            lines.append(f"  {'UNIQUE ' if unique else ''}KEY `{name}` (" + ", ".join(f"`{c}`" for c in cols) + ")")
+        return f"CREATE TABLE `{table}` (\n" + ",\n".join(lines) + "\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4"
+
     def _meta(self, m):
         if m.group("tables"):
-            r = self._raw("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+            r = self._raw(f"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND {_HIDDEN} ORDER BY name")
             return _result([f"Tables_in_{self.database}"], r["rows"])
         if m.group("dbs"):
             try:
@@ -642,21 +860,13 @@ class Connection(_sqlite.Connection):
             info = self._raw(f'PRAGMA table_info("{table}")')["rows"]
             if not info:
                 raise ProgrammingError(1146, f"Table '{table}' doesn't exist")
-            keys = {}   # column -> UNI / MUL from the first index that starts with it, like MySQL
-            for _n, _u, cols in self._indexes(table):
-                keys.setdefault(cols[0], "UNI" if _u else "MUL")
-            rows = []
-            for _cid, name, ctype, notnull, default, pk in info:
-                auto = "auto_increment" if pk and (ctype or "").upper() == "INTEGER" else ""
-                rows.append([name, (ctype or "").lower(), "NO" if notnull else "YES",
-                             "PRI" if pk else keys.get(name, ""), default, auto])
-            return _result(["Field", "Type", "Null", "Key", "Default", "Extra"], rows)
+            return _result(["Field", "Type", "Null", "Key", "Default", "Extra"], self._describe(table, info))
         if m.group("create"):
             table = m.group("create")
-            r = self._raw("SELECT sql FROM sqlite_master WHERE type='table' AND name = ?", [table])
-            if not r["rows"]:
+            info = self._raw(f'PRAGMA table_info("{table}")')["rows"]
+            if not info:
                 raise ProgrammingError(1146, f"Table '{table}' doesn't exist")
-            return _result(["Table", "Create Table"], [[table, r["rows"][0][0]]])
+            return _result(["Table", "Create Table"], [[table, self._create_table(table, info)]])
         if m.group("index"):
             table = m.group("index")
             info = self._raw(f'PRAGMA table_info("{table}")')["rows"]

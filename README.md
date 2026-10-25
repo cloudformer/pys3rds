@@ -192,8 +192,12 @@ Write MySQL, run on the same endpoint. Statements are translated on the client (
 - `ENGINE=`, `CHARSET=`, `COMMENT`, `ON UPDATE CURRENT_TIMESTAMP` are dropped
 
 Not supported — raises `NotSupportedError`, never silently wrong: stored procedures/functions, triggers,
-`FULLTEXT`, `SELECT … FOR UPDATE`, `LOCK TABLES`, `GRANT`/users. Result values come back as stored
-(no `DATETIME` → `datetime` conversion yet).
+`FULLTEXT`, `SELECT … FOR UPDATE`, `LOCK TABLES`, `GRANT`/users.
+
+Result types match pymysql: `DATETIME` → `datetime`, `DATE` → `date`, `TIME` → `timedelta`, `DECIMAL` /
+`SUM` / `AVG` / integer division → `Decimal`, `BLOB` → `bytes` (both directions), `NOW()` → `datetime`.
+Strict mode is emulated: `'abc'` into an `INT` column raises 1366. `DESCRIBE` and `SHOW CREATE TABLE`
+show the MySQL types you declared (kept in a small `_s3rds_columns` table inside the database).
 
 **Compatibility report — [tests/compat/REPORT.md](tests/compat/REPORT.md).** Every feature above is one
 test that runs the same SQL on a real MySQL 8.0 (Docker) and on s3rds and compares results, Python types,

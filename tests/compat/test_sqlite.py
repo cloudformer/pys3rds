@@ -110,9 +110,8 @@ def test_subqueries_union_case(sqlite_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 13: bytes parameters are rejected and BLOB results come back as text")
 def test_blob_round_trip(sqlite_pair):
-    """Types | BLOB values round-trip as bytes | task 13"""
+    """Types | BLOB values round-trip as bytes"""
     sqlite_pair([
         (T, []),
         ("CREATE TABLE t (b BLOB) STRICT", []),

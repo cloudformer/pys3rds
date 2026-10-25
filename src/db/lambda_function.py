@@ -45,6 +45,27 @@ class BadRequest(Exception):
     pass
 
 
+# ---------------- 值的编码:JSON 之外的类型 ----------------
+# 二进制:{"$b": base64} 双向;类型标记(仅当请求带 types:true):按列的声明类型,
+# DATETIME/TIMESTAMP → {"$dt": text}, DATE → {"$d": text}, TIME → {"$t": text}, DECIMAL/NUMERIC → {"$n": text}
+
+def _decode_param(v):
+    if isinstance(v, dict) and "$b" in v:
+        return base64.b64decode(v["$b"])
+    return v
+
+
+def _encode_cell(v):
+    if isinstance(v, (bytes, memoryview)):
+        return {"$b": base64.b64encode(bytes(v)).decode()}
+    return v
+
+
+for _decl, _tag in (("DATETIME", "$dt"), ("TIMESTAMP", "$dt"), ("DATE", "$d"), ("TIME", "$t"),
+                    ("DECIMAL", "$n"), ("NUMERIC", "$n")):
+    sqlite3.register_converter(_decl, (lambda tag: lambda b: {tag: b.decode()})(_tag))
+
+
 class Forbidden(Exception):
     pass
 
@@ -185,7 +206,7 @@ def _prepare(stmt, where="请求"):
 
 def _exec_one(c, sql, params, offset=0):
     """执行一条;结果集按字节分页:跳过 offset 行后最多装 PAGE_BYTES,还有剩就 has_more。"""
-    cur = c.execute(sql, params)
+    cur = c.execute(sql, [_decode_param(p) for p in params])
     if not cur.description:
         return {"columns": [], "rows": [], "rowcount": cur.rowcount, "lastrowid": cur.lastrowid}
     skipped = 0
@@ -196,7 +217,7 @@ def _exec_one(c, sql, params, offset=0):
         skipped += len(chunk)
     rows, size, has_more = [], 0, False
     for row in cur:
-        row = list(row)
+        row = [_encode_cell(v) for v in row]
         rows.append(row)
         size += len(json.dumps(row, default=str)) + 2
         if size >= PAGE_BYTES:
@@ -206,11 +227,12 @@ def _exec_one(c, sql, params, offset=0):
             "lastrowid": None, "has_more": has_more, "next_offset": offset + len(rows)}
 
 
-def _run(inst, fn):
+def _run(inst, fn, typed=False):
     """按入口选 read/run,附带耗时和 S3 动作;只读入口上的写被 SQLite 拒绝 → 403。"""
     t0 = time.perf_counter()
+    detect = sqlite3.PARSE_DECLTYPES if typed else 0
     try:
-        result = inst.read(fn) if READONLY else inst.run(fn)
+        result = inst.read(fn, detect) if READONLY else inst.run(fn, detect)
     except sqlite3.OperationalError as e:
         if READONLY and "readonly" in str(e):
             raise Forbidden("这是只读入口,写操作请走写端点") from None
@@ -220,9 +242,9 @@ def _run(inst, fn):
     return result
 
 
-def _token(sql, params, offset, etag):
+def _token(sql, params, offset, etag, typed):
     return base64.b64encode(json.dumps(
-        {"sql": sql, "params": params, "offset": offset, "etag": etag}).encode()).decode()
+        {"sql": sql, "params": params, "offset": offset, "etag": etag, "types": typed}).encode()).decode()
 
 
 def query(event, db):
@@ -234,11 +256,12 @@ def query(event, db):
         try:
             state = json.loads(base64.b64decode(token))
             sql, params, offset, want = state["sql"], state["params"], int(state["offset"]), state["etag"]
+            typed = bool(state.get("types"))
         except Exception:
             raise BadRequest("invalid next_token") from None
     else:
         sql, params = _prepare(body)
-        offset, want = 0, None
+        offset, want, typed = 0, None, bool(body.get("types"))
 
     inst = _db(db)
 
@@ -247,11 +270,11 @@ def query(event, db):
             raise VersionChanged()
         return _exec_one(c, sql, params, offset)
 
-    result = _run(inst, fn)
+    result = _run(inst, fn, typed)
     has_more = result.pop("has_more", False)
     next_offset = result.pop("next_offset", None)
     if has_more:
-        result["next_token"] = _token(sql, params, next_offset, inst.etag)
+        result["next_token"] = _token(sql, params, next_offset, inst.etag, typed)
     result["truncated"] = has_more  # 0.1.0 客户端看的字段;新客户端见到 truncated 且无 next_token 会报错
     return result
 
@@ -259,7 +282,8 @@ def query(event, db):
 def tx(event, db):
     """多条语句一个事务。SqliteS3.run 本身就是一个 BEGIN/COMMIT,
     这里只是把 fn 换成"顺序执行多条";任一条抛错 → 整体 ROLLBACK,S3 不动。"""
-    stmts = _body(event).get("statements")
+    body = _body(event)
+    stmts = body.get("statements")
     if not isinstance(stmts, list) or not stmts:
         raise BadRequest("statements 必须是非空数组:[{sql, params?}, ...]")
     prepared = [_prepare(s, f"statements[{i}]") for i, s in enumerate(stmts)]
@@ -274,7 +298,7 @@ def tx(event, db):
             results.append(r)
         return {"results": results}
 
-    return _run(_db(db), fn)
+    return _run(_db(db), fn, bool(body.get("types")))
 
 
 ROUTES = [

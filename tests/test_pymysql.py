@@ -15,7 +15,7 @@ import lambda_function as lf  # noqa: E402
 import s3rds  # noqa: E402
 from s3rds import pymysql as s3mysql  # noqa: E402
 from s3rds.pymysql import (IntegrityError, NotSupportedError, OperationalError,  # noqa: E402
-                           ProgrammingError, _bind, _translate)
+                           ProgrammingError, _bind, _translate, _translate_stmts)
 
 AUTH = "Basic " + base64.b64encode(b"admin:pw").decode()
 
@@ -66,7 +66,7 @@ def test_translate_create_table():
 
 
 def test_translate_table_level_pk_moves_into_column():
-    out = _translate("CREATE TABLE t (id INT AUTO_INCREMENT, v TEXT, PRIMARY KEY (id))").upper()
+    out = _translate_stmts("CREATE TABLE t (id INT AUTO_INCREMENT, v TEXT, PRIMARY KEY (id))")[0].upper()
     assert "INTEGER PRIMARY KEY AUTOINCREMENT" in out
     assert out.count("PRIMARY KEY") == 1
 

@@ -4,11 +4,11 @@ Generated 2026-10-25 by `pytest tests` · s3rds 0.1.1 · sqlglot 30.24.0 · Pyth
 
 Each row is one feature exercised with the same SQL on the reference database and on s3rds; results, Python types, rowcount, lastrowid and error codes must match. The feature list only grows (a removed case would show in git), so the support percentage can only move up.
 
-Whole test run: **157 passed**, 0 failed, 21 expected failures (known gaps), 0 skipped — regression suite (`tests/`) and compatibility suite (`tests/compat/`) together.
+Whole test run: **169 passed**, 0 failed, 9 expected failures (known gaps), 0 skipped — regression suite (`tests/`) and compatibility suite (`tests/compat/`) together.
 
 ## s3rds.pymysql vs MySQL — reference: MySQL 8.0.46 (Docker)
 
-**Support 76%** (76 / 99 features) · 15 gap · 5 quirk · 8 unsupported · 71 verified
+**Support 87%** (87 / 99 features) · 4 gap · 5 quirk · 8 unsupported · 82 verified
 
 ✅ verified · ❌ gap — known difference, the note names the task that closes it · ⚪ engine quirk — documented, deliberately not aligned · ⛔ unsupported by design, refused with NotSupportedError · 🟡 fixed — xfail marker to remove · 🔴 regression · ⏭ not run
 
@@ -19,6 +19,7 @@ Whole test run: **157 passed**, 0 failed, 21 expected failures (known gaps), 0 s
 | ALTER TABLE MODIFY COLUMN / CHANGE COLUMN | ✅ |  |
 | ALTER TABLE RENAME COLUMN | ✅ |  |
 | AUTO_INCREMENT never reuses a deleted id | ✅ |  |
+| BLOB column: bytes parameter in, bytes out | ✅ |  |
 | CREATE INDEX / CREATE UNIQUE INDEX / DROP INDEX ... ON t; unique index enforced (1062) | ✅ |  |
 | CREATE TABLE ... AS SELECT | ✅ |  |
 | CREATE TABLE IF NOT EXISTS / DROP TABLE IF EXISTS | ✅ |  |
@@ -27,6 +28,7 @@ Whole test run: **157 passed**, 0 failed, 21 expected failures (known gaps), 0 s
 | Composite PRIMARY KEY (a, b) | ✅ |  |
 | DATE / DATETIME / TIME columns store and compare | ✅ |  |
 | DATETIME / TIMESTAMP DEFAULT CURRENT_TIMESTAMP (ON UPDATE accepted) | ✅ |  |
+| DECIMAL(p, s) column keeps its scale and compares exactly | ✅ |  |
 | ENGINE / CHARSET / COLLATE / COMMENT / UNSIGNED options accepted | ✅ |  |
 | ENUM column accepts listed values and its DEFAULT | ✅ |  |
 | FOREIGN KEY ... ON DELETE CASCADE | ✅ |  |
@@ -34,8 +36,6 @@ Whole test run: **157 passed**, 0 failed, 21 expected failures (known gaps), 0 s
 | JSON column stores a document | ✅ |  |
 | RENAME TABLE / ALTER TABLE ... RENAME TO | ✅ |  |
 | UNIQUE column constraint and UNIQUE KEY (a, b) table constraint | ✅ |  |
-| BLOB column: bytes parameter in, bytes out | ❌ gap | task 13 |
-| DECIMAL(p, s) column keeps its scale and compares exactly | ❌ gap | task 8 |
 | **DML** | | |
 | CREATE TABLE / INSERT / UPDATE / DELETE / SELECT with %s and %(name)s placeholders | ✅ |  |
 | DELETE t FROM t JOIN o ... | ✅ |  |
@@ -52,6 +52,7 @@ Whole test run: **157 passed**, 0 failed, 21 expected failures (known gaps), 0 s
 | ON DUPLICATE KEY UPDATE reports rowcount 2 and lastrowid 0 when it updates | ⚪ quirk | MySQL 2 / 0, s3rds 1 / row id |
 | **Queries** | | |
 | 1200-row result comes back complete (paging is transparent) | ✅ |  |
+| 7 / 2 is 3.5000 (Decimal) in MySQL, 7 DIV 2 is 3 | ✅ |  |
 | CROSS JOIN, self join with aliases, RIGHT JOIN | ✅ |  |
 | Case-insensitive string comparison (MySQL default collation) | ✅ |  |
 | Derived table in FROM, WITH ... AS, WITH RECURSIVE | ✅ |  |
@@ -62,7 +63,6 @@ Whole test run: **157 passed**, 0 failed, 21 expected failures (known gaps), 0 s
 | Subquery in WHERE (IN / EXISTS), scalar subquery, UNION / UNION ALL | ✅ |  |
 | WHERE with LIKE, IN, BETWEEN, IS NULL, <>, AND / OR | ✅ |  |
 | Window functions: ROW_NUMBER, RANK, COUNT(*) OVER (PARTITION BY) | ✅ |  |
-| 7 / 2 is 3.5000 (Decimal) in MySQL, 7 DIV 2 is 3 | ❌ gap | task 8 |
 | GROUP_CONCAT with ORDER BY and SEPARATOR | ❌ gap | needs SQLite 3.44+ |
 | **Functions** | | |
 | ABS, MOD, LOWER, TRIM, REPLACE, LEFT, RIGHT, INSTR | ✅ |  |
@@ -89,26 +89,26 @@ Whole test run: **157 passed**, 0 failed, 21 expected failures (known gaps), 0 s
 | CHECK constraint violation (3819) | ✅ |  |
 | Error classes and MySQL codes: 1062 duplicate, 1146 no table, 1054 no column, 1064 syntax, 1048 NULL | ✅ |  |
 | FOREIGN KEY enforced on insert (1452) | ✅ |  |
-| Strict mode: 'abc' into an INT column raises 1366 | ❌ gap | task 8 |
+| Strict mode: 'abc' into an INT column raises 1366 | ✅ |  |
 | ENUM rejects values outside the list with MySQL's error code | ⚪ quirk | MySQL 1265, s3rds 3819 (CHECK) |
 | Omitting a NOT NULL column without default raises 1364 | ⚪ quirk | MySQL 1364, s3rds 1048 |
 | **Metadata** | | |
+| DESCRIBE shows MySQL type names | ✅ |  |
+| SHOW CREATE TABLE returns the original column definitions | ✅ |  |
 | SHOW DATABASES, SHOW COLUMNS FROM t (field names and keys) | ✅ |  |
 | SHOW INDEX FROM t (key and column names) | ✅ |  |
 | SHOW TABLES | ✅ |  |
 | USE db, SET NAMES, SET SESSION sql_mode are accepted | ✅ |  |
 | information_schema.tables / columns | ✅ |  |
-| DESCRIBE shows MySQL type names | ❌ gap | task 12 |
-| SHOW CREATE TABLE returns the original column definitions | ❌ gap | task 12 |
 | **Types** | | |
+| Aggregate result types: COUNT(*) int, SUM(INT) Decimal | ✅ |  |
+| BLOB results come back as bytes | ✅ |  |
+| NOW() / CURDATE() return datetime / date objects | ✅ |  |
 | Parameter binding: int, float, str, None, bool | ✅ |  |
+| Result types: DATETIME → datetime, DATE → date, TIME → timedelta | ✅ |  |
+| Result types: DECIMAL → Decimal, TINYINT(1) → int, BIGINT → int | ✅ |  |
 | Result types: INT → int, VARCHAR → str, DOUBLE / FLOAT → float, NULL → None | ✅ |  |
 | datetime / date / Decimal parameters | ✅ |  |
-| Aggregate result types: COUNT(*) int, SUM(INT) Decimal | ❌ gap | task 8 |
-| BLOB results come back as bytes | ❌ gap | task 13 |
-| NOW() / CURDATE() return datetime / date objects | ❌ gap | task 9 |
-| Result types: DATETIME → datetime, DATE → date, TIME → timedelta | ❌ gap | task 8 |
-| Result types: DECIMAL → Decimal, TINYINT(1) → int, BIGINT → int | ❌ gap | task 8 |
 | **Unsupported** | | |
 | CREATE PROCEDURE / CALL | ⛔ | server-side code; use the application |
 | CREATE TRIGGER | ⛔ | server-side code; use the application |
@@ -125,7 +125,7 @@ Whole test run: **157 passed**, 0 failed, 21 expected failures (known gaps), 0 s
 
 ## s3rds.sqlite vs sqlite3 — reference: SQLite 3.43.2 (standard library)
 
-**Support 88%** (8 / 9 features) · 1 gap · 8 verified
+**Support 100%** (9 / 9 features) · 9 verified
 
 ✅ verified · ❌ gap — known difference, the note names the task that closes it · ⚪ engine quirk — documented, deliberately not aligned · ⛔ unsupported by design, refused with NotSupportedError · 🟡 fixed — xfail marker to remove · 🔴 regression · ⏭ not run
 
@@ -142,6 +142,6 @@ Whole test run: **157 passed**, 0 failed, 21 expected failures (known gaps), 0 s
 | **Constraints & errors** | | |
 | Errors are raised, never swallowed: UNIQUE, NOT NULL, no such table, syntax | ✅ |  |
 | **Types** | | |
+| BLOB values round-trip as bytes | ✅ |  |
 | Parameter binding: int, float, str, None, bool | ✅ |  |
 | datetime / Decimal parameters stored as canonical text | ✅ |  |
-| BLOB values round-trip as bytes | ❌ gap | task 13 |

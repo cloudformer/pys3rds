@@ -84,12 +84,39 @@ def _encode_value(value, index):
     if isinstance(value, decimal.Decimal):
         return str(value)  # keeps the precision; never a float
     if isinstance(value, (bytes, bytearray, memoryview)):
-        raise Error(0, f"parameter #{index}: binary parameters are not supported yet")
+        return {"$b": base64.b64encode(bytes(value)).decode()}
     raise Error(0, f"parameter #{index}: type {type(value).__name__} cannot be encoded")
 
 
 def _encode_params(params):
     return [_encode_value(v, i + 1) for i, v in enumerate(params or [])]
+
+
+# ---------------- results: the server's markers -> Python values ----------------
+# {"$b": base64} is always sent for BLOBs; the typed markers only when the connection asks for
+# types (the MySQL driver does; this driver returns text exactly as sqlite3 would).
+
+def _decode_cell(v):
+    if not isinstance(v, dict) or len(v) != 1:
+        return v
+    (tag, text), = v.items()
+    if tag == "$b":
+        return base64.b64decode(text)
+    if tag == "$dt":
+        return datetime.datetime.fromisoformat(text)
+    if tag == "$d":
+        return datetime.date.fromisoformat(text)
+    if tag == "$t":
+        return datetime.time.fromisoformat(text)
+    if tag == "$n":
+        return decimal.Decimal(text)
+    return v
+
+
+def _decode_result(r):
+    if r.get("rows"):
+        r["rows"] = [[_decode_cell(v) for v in row] for row in r["rows"]]
+    return r
 
 
 # ---------------- placeholders: %s (pymysql style) -> ? (SQLite) ----------------
@@ -205,6 +232,8 @@ class cursors:  # so that sqlite.cursors.DictCursor reads like pymysql.cursors.D
 # ---------------- connection ----------------
 
 class Connection:
+    _typed = False   # ask the server for column-type markers (the MySQL driver does; sqlite3 returns text)
+
     def __init__(self, url, database, user="", password="", timeout=30, cursorclass=Cursor):
         p = urllib.parse.urlparse(url.rstrip("/"))
         self._host = p.netloc
@@ -341,6 +370,8 @@ class Connection:
         """
         path = f"/api/db/{self.database}/query"
         payload = {"sql": _to_qmark(sql), "params": _encode_params(params)}
+        if self._typed:
+            payload["types"] = True
         for attempt in range(3):
             try:
                 return self._fetch_pages(path, payload)
@@ -361,7 +392,7 @@ class Connection:
         first.pop("truncated", None)
         first.pop("next_token", None)
         self._note(first)
-        return first
+        return _decode_result(first)
 
     def _note(self, r):
         self.last = {"ms": r.get("ms"), "s3": r.get("s3")}
@@ -381,9 +412,12 @@ class Connection:
         stmts = [{"sql": _to_qmark(s), "params": []} if isinstance(s, str)
                  else {"sql": _to_qmark(s[0]), "params": _encode_params(s[1] if len(s) > 1 else [])}
                  for s in statements]
-        r = self._post(f"/api/db/{self.database}/tx", {"statements": stmts})
+        payload = {"statements": stmts}
+        if self._typed:
+            payload["types"] = True
+        r = self._post(f"/api/db/{self.database}/tx", payload)
         self._note(r)
-        return r["results"]
+        return [_decode_result(x) for x in r["results"]]
 
 
 # ---------------- module entry point, same signature as pymysql.connect ----------------

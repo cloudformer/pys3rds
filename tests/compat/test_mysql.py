@@ -333,15 +333,14 @@ def test_enum_column(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 8: DECIMAL is stored as REAL, scale is lost (1.10 reads back as 1.1)")
 def test_decimal_column(mysql_pair):
-    """DDL | DECIMAL(p, s) column keeps its scale and compares exactly | task 8"""
+    """DDL | DECIMAL(p, s) column keeps its scale and compares exactly"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (x DECIMAL(10,2))", []),
         ("INSERT INTO t VALUES (1.10), (2.20), (0.1)", []),
         ("SELECT COUNT(*) AS c FROM t WHERE x = 1.10", []),
-        ("SELECT CAST(x AS CHAR) AS s FROM t ORDER BY x", []),
+        ("SELECT x FROM t ORDER BY x", []),
     ])
 
 
@@ -377,9 +376,8 @@ def test_json_column(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 13: bytes parameters are rejected")
 def test_blob_column(mysql_pair):
-    """DDL | BLOB column: bytes parameter in, bytes out | task 13"""
+    """DDL | BLOB column: bytes parameter in, bytes out"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (b BLOB)", []),
@@ -572,9 +570,8 @@ def test_group_concat(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 8: 7 / 2 is 3.5 here (float), Decimal('3.5000') in MySQL")
 def test_integer_division(mysql_pair):
-    """Queries | 7 / 2 is 3.5000 (Decimal) in MySQL, 7 DIV 2 is 3 | task 8"""
+    """Queries | 7 / 2 is 3.5000 (Decimal) in MySQL, 7 DIV 2 is 3"""
     mysql_pair([("SELECT 7 / 2 AS d, 7 DIV 2 AS i, 7 % 2 AS m", [])])
 
 
@@ -756,9 +753,8 @@ def test_check_constraint(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 8: no strict typing, 'abc' is stored instead of raising 1366")
 def test_strict_type_error(mysql_pair):
-    """Constraints & errors | Strict mode: 'abc' into an INT column raises 1366 | task 8"""
+    """Constraints & errors | Strict mode: 'abc' into an INT column raises 1366"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (n INT)", []),
@@ -814,9 +810,8 @@ def test_show_databases_and_columns(mysql_pair):
     assert [(r["Field"], r["Key"]) for r in real.rows] == [(r["Field"], r["Key"]) for r in ours.rows]
 
 
-@pytest.mark.xfail(strict=True, reason="task 12: SHOW CREATE TABLE returns the SQLite DDL, not the original")
 def test_show_create_table(mysql_pair):
-    """Metadata | SHOW CREATE TABLE returns the original column definitions | task 12"""
+    """Metadata | SHOW CREATE TABLE returns the original column definitions"""
     mysql_pair([(T, []), (USERS, [])])
     real, ours = mysql_pair.both("SHOW CREATE TABLE t")
     for side in (real, ours):
@@ -916,9 +911,8 @@ def test_lock_tables_refused(mysql_pair):
 
 # ---- known gaps: each marker names the task in the MySQL spec that closes it ----
 
-@pytest.mark.xfail(strict=True, reason="task 8: DATETIME/DATE/TIME come back as str, pymysql returns datetime/date/timedelta")
 def test_result_datetime_types(mysql_pair):
-    """Types | Result types: DATETIME → datetime, DATE → date, TIME → timedelta | task 8"""
+    """Types | Result types: DATETIME → datetime, DATE → date, TIME → timedelta"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (dt DATETIME, d DATE, tm TIME)", []),
@@ -927,9 +921,8 @@ def test_result_datetime_types(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 8: DECIMAL comes back as float/str, pymysql returns Decimal")
 def test_result_decimal_types(mysql_pair):
-    """Types | Result types: DECIMAL → Decimal, TINYINT(1) → int, BIGINT → int | task 8"""
+    """Types | Result types: DECIMAL → Decimal, TINYINT(1) → int, BIGINT → int"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (x DECIMAL(10,2), b TINYINT(1), big BIGINT)", []),
@@ -938,9 +931,8 @@ def test_result_decimal_types(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 13: BLOB results come back as text, pymysql returns bytes")
 def test_result_blob_type(mysql_pair):
-    """Types | BLOB results come back as bytes | task 13"""
+    """Types | BLOB results come back as bytes"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (b BLOB)", []),
@@ -949,9 +941,8 @@ def test_result_blob_type(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 8: SUM() is Decimal in MySQL, int here")
 def test_aggregate_types(mysql_pair):
-    """Types | Aggregate result types: COUNT(*) int, SUM(INT) Decimal | task 8"""
+    """Types | Aggregate result types: COUNT(*) int, SUM(INT) Decimal"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name, score) VALUES ('a', 1), ('b', 2)", []),
@@ -976,10 +967,14 @@ def test_inline_index_exists(mysql_pair):
     assert {(r["Key_name"], r["Column_name"]) for r in real.rows} == {(r["Key_name"], r["Column_name"]) for r in ours.rows}
 
 
-@pytest.mark.xfail(strict=True, reason="task 9: NOW() returns datetime in pymysql, str here")
 def test_now_type(mysql_pair):
-    """Types | NOW() / CURDATE() return datetime / date objects | task 9"""
-    mysql_pair([("SELECT NOW() IS NOT NULL AS ok, DATE(NOW()) = CURDATE() AS same, NOW() AS n", [])])
+    """Types | NOW() / CURDATE() return datetime / date objects"""
+    import datetime
+    real, ours = mysql_pair.both("SELECT NOW() AS n, CURDATE() AS d, CURTIME() AS t")
+    for side in (real, ours):
+        assert side.error is None, side.error
+        row = side.rows[0]
+        assert type(row["n"]) is datetime.datetime and type(row["d"]) is datetime.date and type(row["t"]) is datetime.timedelta, row
 
 
 @pytest.mark.xfail(strict=True, reason="MySQL strict mode reports 1265 for a bad ENUM value; s3rds enforces it with a CHECK constraint (3819)")
@@ -1011,9 +1006,8 @@ def test_upsert_rowcount_quirk(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 12: DESCRIBE shows SQLite type names (text(50)) not MySQL's (varchar(50))")
 def test_describe(mysql_pair):
-    """Metadata | DESCRIBE shows MySQL type names | task 12"""
+    """Metadata | DESCRIBE shows MySQL type names"""
     mysql_pair([
         (T, []), (USERS, []),
         ("DESCRIBE t", []),

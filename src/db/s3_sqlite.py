@@ -178,11 +178,12 @@ class SqliteS3:
 
     # ---- 读 ----
 
-    def read(self, fn):
-        """fn(conn) -> result。连接以只读模式打开,任何写都会被 SQLite 拒绝。"""
+    def read(self, fn, detect_types=0):
+        """fn(conn) -> result。连接以只读模式打开,任何写都会被 SQLite 拒绝。
+        detect_types=sqlite3.PARSE_DECLTYPES 时按列的声明类型调用已注册的 converter(驱动要类型信息时用)。"""
         self._reset_stats()
         self._ensure_fresh()
-        conn = sqlite3.connect(f"file:{self.local}?mode=ro", uri=True)
+        conn = sqlite3.connect(f"file:{self.local}?mode=ro", uri=True, detect_types=detect_types)
         conn.row_factory = sqlite3.Row
         try:
             return fn(conn)
@@ -191,7 +192,7 @@ class SqliteS3:
 
     # ---- 读写 ----
 
-    def run(self, fn):
+    def run(self, fn, detect_types=0):
         """fn(conn) -> result。只有 fn 真的改了数据才带 If-Match 回传 S3。
 
         fn 必须可重放(纯 SQL 即可):412 冲突时会在新下载的文件上重新执行。
@@ -203,7 +204,7 @@ class SqliteS3:
             self._ensure_fresh()
             etag = SqliteS3._etags[self.local]
             before = _fingerprint(self.local)
-            result, dirty = self._transact(fn)
+            result, dirty = self._transact(fn, detect_types)
             # authorizer 管"意图",文件指纹管"事实"(兜住 PRAGMA optimize 这类不带赋值却写文件的)
             if not dirty and _fingerprint(self.local) == before:
                 return result
@@ -232,7 +233,7 @@ class SqliteS3:
             f"s3://{self.bucket}/{self.key}: 并发写冲突,"
             f"{self.max_retries} 次重试后放弃,本次写入未生效") from last_err
 
-    def _transact(self, fn):
+    def _transact(self, fn, detect_types=0):
         """在显式事务里执行 fn(DDL 也进事务);返回 (result, authorizer 是否看到写动作)。
 
         fn 抛异常 → ROLLBACK,本地文件回到执行前;ROLLBACK 自己都失败才作废缓存。
@@ -249,7 +250,7 @@ class SqliteS3:
             return sqlite3.SQLITE_OK
 
         # isolation_level=None:关掉 sqlite3 模块的隐式事务,自己 BEGIN/COMMIT
-        conn = sqlite3.connect(self.local, isolation_level=None)
+        conn = sqlite3.connect(self.local, isolation_level=None, detect_types=detect_types)
         conn.row_factory = sqlite3.Row
         try:
             # 万一库是 WAL 模式,改回单文件日志,保证 close 后主文件自洽(需在事务外)
