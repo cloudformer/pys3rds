@@ -177,12 +177,19 @@ pytest tests/ -v
 Write MySQL, run on the same endpoint. Statements are translated on the client (sqlglot, cached per statement):
 
 - `%s` / `%(name)s` placeholders, backticks, `LIMIT offset, count`
-- `AUTO_INCREMENT` → `INTEGER PRIMARY KEY AUTOINCREMENT`; `ENUM(...)` → `TEXT CHECK (...)`;
-  text columns get `COLLATE NOCASE` (MySQL's case-insensitive default)
-- `INSERT IGNORE`, `ON DUPLICATE KEY UPDATE` (`VALUES(col)` → `excluded.col`), `LAST_INSERT_ID()`
-- `SHOW TABLES / DATABASES / COLUMNS / CREATE TABLE / INDEX`, `DESCRIBE`, `SELECT VERSION()`, `SELECT DATABASE()`
+- `AUTO_INCREMENT` → `INTEGER PRIMARY KEY AUTOINCREMENT`; `ENUM(...)` → `TEXT CHECK (...)`; `UNSIGNED` → signed;
+  text columns get `COLLATE NOCASE` (MySQL's case-insensitive default; `_bin` collations stay case-sensitive)
+- inline `KEY` / `INDEX` / `UNIQUE KEY name (a, b)` become `CREATE INDEX` statements in the same transaction
+  (stored as `table__name`, shown and dropped by their MySQL name)
+- `INSERT IGNORE`, `ON DUPLICATE KEY UPDATE` (`VALUES(col)` → `excluded.col`), `REPLACE INTO`, `INSERT … SELECT`,
+  the `DEFAULT` keyword, `UPDATE … JOIN`, `DELETE t FROM t JOIN …`, `TRUNCATE`, `RENAME TABLE`
+- `ALTER TABLE CHANGE a b` renames; a type-only `MODIFY` / `CHANGE` is accepted and does nothing (SQLite is dynamically typed)
+- functions: `DATE_ADD/SUB`, `YEAR … SECOND`, `DAYOFWEEK`, `DATEDIFF`, `TIMESTAMPDIFF`, `LPAD/RPAD`, `REPEAT`,
+  `SUBSTRING_INDEX` (count ±1), `->` / `->>` / `JSON_UNQUOTE`, `UUID()`, `RAND()`, `LAST_INSERT_ID()`, `DATABASE()`
+- `SHOW TABLES / DATABASES / COLUMNS / CREATE TABLE / INDEX`, `DESCRIBE`, `information_schema.tables / columns`;
+  `USE db`, `SET NAMES / SESSION / sql_mode / time_zone` are accepted as no-ops
 - errors are pymysql-style classes with MySQL codes: 1062 duplicate, 1146 no table, 1054 no column, 1064 syntax, …
-- `ENGINE=`, `CHARSET=`, `ON UPDATE CURRENT_TIMESTAMP` and inline `KEY`/`INDEX` are dropped
+- `ENGINE=`, `CHARSET=`, `COMMENT`, `ON UPDATE CURRENT_TIMESTAMP` are dropped
 
 Not supported — raises `NotSupportedError`, never silently wrong: stored procedures/functions, triggers,
 `FULLTEXT`, `SELECT … FOR UPDATE`, `LOCK TABLES`, `GRANT`/users. Result values come back as stored

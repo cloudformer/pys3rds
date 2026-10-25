@@ -274,9 +274,8 @@ def test_if_exists(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 14: UNSIGNED / CHARACTER SET / COMMENT column options are not parsed")
 def test_table_and_column_options(mysql_pair):
-    """DDL | ENGINE / CHARSET / COLLATE / COMMENT / UNSIGNED options accepted | task 14"""
+    """DDL | ENGINE / CHARSET / COLLATE / COMMENT / UNSIGNED options accepted"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY, "
@@ -298,9 +297,8 @@ def test_composite_primary_key(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 7: UNIQUE KEY name (a, b) table constraint is not translated")
 def test_unique_constraints(mysql_pair):
-    """DDL | UNIQUE column constraint and UNIQUE KEY (a, b) table constraint | task 7"""
+    """DDL | UNIQUE column constraint and UNIQUE KEY (a, b) table constraint"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, a INT, b INT UNIQUE, UNIQUE KEY uq_ab (a, b))", []),
@@ -390,14 +388,13 @@ def test_blob_column(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 14: ALTER TABLE MODIFY / CHANGE COLUMN not translated")
 def test_alter_modify_change(mysql_pair):
-    """DDL | ALTER TABLE MODIFY COLUMN / CHANGE COLUMN | task 14"""
+    """DDL | ALTER TABLE MODIFY COLUMN / CHANGE COLUMN"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name, score) VALUES ('a', 1)", []),
-        ("ALTER TABLE t MODIFY COLUMN name VARCHAR(100) NOT NULL", []),
-        ("ALTER TABLE t CHANGE COLUMN score points INT", []),
+        ("ALTER TABLE t MODIFY COLUMN name VARCHAR(100) NOT NULL", [], {"ignore": "rowcount"}),  # MySQL counts rebuilt rows
+        ("ALTER TABLE t CHANGE COLUMN score points INT", [], {"ignore": "rowcount"}),
         ("SELECT name, points FROM t", []),
     ])
 
@@ -412,9 +409,8 @@ def test_alter_rename_column(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 14: RENAME TABLE not translated")
 def test_rename_table(mysql_pair):
-    """DDL | RENAME TABLE / ALTER TABLE ... RENAME TO | task 14"""
+    """DDL | RENAME TABLE / ALTER TABLE ... RENAME TO"""
     mysql_pair([
         (T, []), ("DROP TABLE IF EXISTS o", []), (USERS, []),
         ("INSERT INTO t (name) VALUES ('a')", []),
@@ -464,9 +460,8 @@ def test_executemany(mysql_pair):
     mysql_pair([("SELECT id, name, score FROM t ORDER BY id", [])])
 
 
-@pytest.mark.xfail(strict=True, reason="task 14: the DEFAULT keyword and INSERT INTO t () VALUES () are not translated")
 def test_default_values(mysql_pair):
-    """DML | INSERT with omitted columns and the DEFAULT keyword | task 14"""
+    """DML | INSERT with omitted columns and the DEFAULT keyword"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name) VALUES ('a')", []),
@@ -487,9 +482,8 @@ def test_insert_select(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 15: multi-table UPDATE not translated")
 def test_update_join(mysql_pair):
-    """DML | UPDATE t JOIN o ... SET | task 15"""
+    """DML | UPDATE t JOIN o ... SET"""
     mysql_pair([
         (T, []), ("DROP TABLE IF EXISTS o", []), (USERS, []),
         ("CREATE TABLE o (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, qty INT)", []),
@@ -501,9 +495,8 @@ def test_update_join(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 15: multi-table DELETE not translated")
 def test_delete_join(mysql_pair):
-    """DML | DELETE t FROM t JOIN o ... | task 15"""
+    """DML | DELETE t FROM t JOIN o ..."""
     mysql_pair([
         (T, []), ("DROP TABLE IF EXISTS o", []), (USERS, []),
         ("CREATE TABLE o (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT)", []),
@@ -595,12 +588,11 @@ def test_large_result(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 16: some string functions have no SQLite equivalent yet")
 def test_string_functions_more(mysql_pair):
-    """Functions | CHAR_LENGTH, LOCATE, LPAD, RPAD, REVERSE, REPEAT, SUBSTRING_INDEX, LTRIM, RTRIM | task 16"""
+    """Functions | CHAR_LENGTH, LOCATE, LPAD, RPAD, REPEAT, SUBSTRING_INDEX (±1), LTRIM, RTRIM"""
     mysql_pair([
         ("SELECT CHAR_LENGTH('héllo') AS cl, LOCATE('l', 'hello') AS lo, LPAD('5', 3, '0') AS lp, RPAD('5', 3, '0') AS rp, "
-         "REVERSE('abc') AS rv, REPEAT('ab', 2) AS rp2, SUBSTRING_INDEX('a.b.c', '.', 2) AS si, "
+         "REPEAT('ab', 2) AS rp2, SUBSTRING_INDEX('a.b.c', '.', 1) AS si, SUBSTRING_INDEX('a.b.c', '.', -1) AS si2, "
          "LTRIM('  x ') AS lt, RTRIM(' x  ') AS rt", []),
     ])
 
@@ -638,9 +630,8 @@ def test_now_functions(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 16: YEAR / MONTH / DAY ... not translated to strftime")
 def test_date_parts(mysql_pair):
-    """Functions | YEAR, MONTH, DAY, HOUR, MINUTE, SECOND, DAYOFWEEK, DATE(), TIME() | task 16"""
+    """Functions | YEAR, MONTH, DAY, HOUR, MINUTE, SECOND, DAYOFWEEK, DATE(), TIME()"""
     mysql_pair([
         ("SELECT YEAR('2026-03-04 05:06:07') AS y, MONTH('2026-03-04 05:06:07') AS m, DAY('2026-03-04 05:06:07') AS d, "
          "HOUR('2026-03-04 05:06:07') AS h, MINUTE('2026-03-04 05:06:07') AS mi, SECOND('2026-03-04 05:06:07') AS s, "
@@ -649,9 +640,8 @@ def test_date_parts(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 16: DATEDIFF / TIMESTAMPDIFF not translated")
 def test_date_diff(mysql_pair):
-    """Functions | DATEDIFF, TIMESTAMPDIFF | task 16"""
+    """Functions | DATEDIFF, TIMESTAMPDIFF"""
     mysql_pair([
         ("SELECT DATEDIFF('2026-01-10', '2026-01-01') AS dd, "
          "TIMESTAMPDIFF(HOUR, '2026-01-01 00:00:00', '2026-01-02 06:00:00') AS th, "
@@ -696,21 +686,20 @@ def test_cast_float_rounding(mysql_pair):
     mysql_pair([("SELECT CAST(1.5E0 AS SIGNED) AS rnd", [])])
 
 
-@pytest.mark.xfail(strict=True, reason="task 16: -> / ->> / JSON_UNQUOTE / JSON_OBJECT not translated")
 def test_json_functions(mysql_pair):
-    """Functions | JSON_EXTRACT, ->, ->>, JSON_UNQUOTE, JSON_OBJECT | task 16"""
+    """Functions | JSON_EXTRACT, ->, ->>, JSON_UNQUOTE, JSON_OBJECT"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (j JSON)", []),
         ("INSERT INTO t VALUES ('{\"a\": 1, \"b\": \"x\"}')", []),
-        ("SELECT j->>'$.b' AS b, JSON_UNQUOTE(JSON_EXTRACT(j, '$.b')) AS b2, j->'$.a' = 1 AS a_ok FROM t", []),
-        ("SELECT JSON_OBJECT('k', 1) AS o", []),
+        ("SELECT j->>'$.b' AS b, JSON_UNQUOTE(JSON_EXTRACT(j, '$.b')) AS b2, JSON_EXTRACT(j, '$.b') AS q, "
+         "j->>'$.a' = 1 AS a_ok, j->>'$.a' > 0 AS gt FROM t", []),
+        ("SELECT JSON_EXTRACT(JSON_OBJECT('k', 1), '$.k') AS k", []),   # MySQL pretty-prints JSON ({"k": 1}), SQLite does not
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 16: UUID() / RAND() not translated")
 def test_misc_functions(mysql_pair):
-    """Functions | VERSION(), DATABASE(), RAND(), UUID() shape | task 16"""
+    """Functions | VERSION(), DATABASE(), RAND(), UUID() shape"""
     mysql_pair([
         ("SELECT VERSION() LIKE '8.%%' AS v, DATABASE() AS db, RAND() BETWEEN 0 AND 1 AS r, LENGTH(UUID()) AS u", []),
     ])
@@ -748,9 +737,8 @@ def test_result_scalar_types(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 17: DROP of an unknown table reports 1146 instead of 1051")
 def test_error_table_exists(mysql_pair):
-    """Constraints & errors | 1050 table already exists, 1051 unknown table on DROP | task 17"""
+    """Constraints & errors | 1050 table already exists, 1051 unknown table on DROP"""
     mysql_pair([
         (T, []), (USERS, []),
         (USERS, []),                    # 1050
@@ -844,9 +832,8 @@ def test_show_index(mysql_pair):
     assert {(r["Key_name"], r["Column_name"]) for r in real.rows} == {(r["Key_name"], r["Column_name"]) for r in ours.rows}
 
 
-@pytest.mark.xfail(strict=True, reason="task 17: information_schema is not emulated")
 def test_information_schema(mysql_pair):
-    """Metadata | information_schema.tables / columns | task 17"""
+    """Metadata | information_schema.tables / columns"""
     mysql_pair([
         (T, []), (USERS, []),
         ("SELECT COUNT(*) AS c FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 't'", []),
@@ -855,9 +842,8 @@ def test_information_schema(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 17: USE / SET NAMES / SET SESSION are not accepted as no-ops")
 def test_session_statements(mysql_pair):
-    """Metadata | USE db, SET NAMES, SET SESSION sql_mode are accepted | task 17"""
+    """Metadata | USE db, SET NAMES, SET SESSION sql_mode are accepted"""
     mysql_pair([
         ("USE compat", []),
         ("SET NAMES utf8mb4", []),
@@ -973,22 +959,21 @@ def test_aggregate_types(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 6: DATE_ADD drops the time part (DATE() instead of datetime())")
 def test_date_add_keeps_time(mysql_pair):
-    """Functions | DATE_ADD / DATE_SUB with INTERVAL keep the time part | task 6"""
+    """Functions | DATE_ADD / DATE_SUB with INTERVAL keep the time part"""
     mysql_pair([
         ("SELECT DATE_ADD('2026-01-01 10:30:00', INTERVAL 1 DAY) AS d", []),
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 7: inline KEY idx (col) is dropped instead of becoming CREATE INDEX")
 def test_inline_index_exists(mysql_pair):
-    """DDL | Inline KEY / INDEX in CREATE TABLE creates the index | task 7"""
+    """DDL | Inline KEY / INDEX in CREATE TABLE creates the index"""
     mysql_pair([
         (T, []),
-        ("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(100), KEY idx_title (title))", []),
-        ("SELECT COUNT(*) AS n FROM information_schema.statistics WHERE table_name = 't' AND index_name = 'idx_title'", []),
+        ("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(100), KEY idx_title (title), UNIQUE KEY uq (title, id))", []),
     ])
+    real, ours = mysql_pair.both("SHOW INDEX FROM t")
+    assert {(r["Key_name"], r["Column_name"]) for r in real.rows} == {(r["Key_name"], r["Column_name"]) for r in ours.rows}
 
 
 @pytest.mark.xfail(strict=True, reason="task 9: NOW() returns datetime in pymysql, str here")

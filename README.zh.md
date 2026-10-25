@@ -172,12 +172,19 @@ pytest tests/ -v
 写 MySQL，跑在同一个 endpoint 上。语句在客户端翻译（sqlglot，按语句缓存）：
 
 - `%s` / `%(name)s` 占位符、反引号、`LIMIT offset, count`
-- `AUTO_INCREMENT` → `INTEGER PRIMARY KEY AUTOINCREMENT`；`ENUM(...)` → `TEXT CHECK (...)`；
-  文本列加 `COLLATE NOCASE`（模拟 MySQL 默认不区分大小写）
-- `INSERT IGNORE`、`ON DUPLICATE KEY UPDATE`（`VALUES(col)` → `excluded.col`）、`LAST_INSERT_ID()`
-- `SHOW TABLES / DATABASES / COLUMNS / CREATE TABLE / INDEX`、`DESCRIBE`、`SELECT VERSION()`、`SELECT DATABASE()`
+- `AUTO_INCREMENT` → `INTEGER PRIMARY KEY AUTOINCREMENT`；`ENUM(...)` → `TEXT CHECK (...)`；`UNSIGNED` → 有符号；
+  文本列加 `COLLATE NOCASE`（模拟 MySQL 默认不区分大小写；`_bin` 排序规则保持区分）
+- 行内 `KEY` / `INDEX` / `UNIQUE KEY name (a, b)` 变成同一事务里的 `CREATE INDEX`
+  （存为 `table__name`，SHOW / DROP 时按 MySQL 的名字）
+- `INSERT IGNORE`、`ON DUPLICATE KEY UPDATE`（`VALUES(col)` → `excluded.col`）、`REPLACE INTO`、`INSERT … SELECT`、
+  `DEFAULT` 关键字、`UPDATE … JOIN`、`DELETE t FROM t JOIN …`、`TRUNCATE`、`RENAME TABLE`
+- `ALTER TABLE CHANGE a b` 改名；只改类型的 `MODIFY` / `CHANGE` 接受但不做事（SQLite 动态类型）
+- 函数：`DATE_ADD/SUB`、`YEAR … SECOND`、`DAYOFWEEK`、`DATEDIFF`、`TIMESTAMPDIFF`、`LPAD/RPAD`、`REPEAT`、
+  `SUBSTRING_INDEX`（count ±1）、`->` / `->>` / `JSON_UNQUOTE`、`UUID()`、`RAND()`、`LAST_INSERT_ID()`、`DATABASE()`
+- `SHOW TABLES / DATABASES / COLUMNS / CREATE TABLE / INDEX`、`DESCRIBE`、`information_schema.tables / columns`；
+  `USE db`、`SET NAMES / SESSION / sql_mode / time_zone` 接受为空操作
 - 报错是 pymysql 风格的异常类 + MySQL 错误码：1062 重复键、1146 表不存在、1054 列不存在、1064 语法……
-- `ENGINE=`、`CHARSET=`、`ON UPDATE CURRENT_TIMESTAMP`、行内 `KEY`/`INDEX` 会被丢弃
+- `ENGINE=`、`CHARSET=`、`COMMENT`、`ON UPDATE CURRENT_TIMESTAMP` 会被丢弃
 
 不支持的——抛 `NotSupportedError`，绝不静默出错：存储过程/函数、触发器、`FULLTEXT`、
 `SELECT … FOR UPDATE`、`LOCK TABLES`、`GRANT`/用户管理。结果值按存储原样返回（暂无 `DATETIME` → `datetime` 转换）。

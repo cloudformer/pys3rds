@@ -15,10 +15,13 @@ What is translated (client side, cached per statement):
   - placeholders %s and %(name)s, %% -> %           - backticks, LIMIT offset,count
   - AUTO_INCREMENT -> INTEGER PRIMARY KEY AUTOINCREMENT   - ENUM(...) -> TEXT CHECK (col IN (...))
   - text columns get COLLATE NOCASE (MySQL's default case-insensitive comparison)
-  - INSERT IGNORE, ON DUPLICATE KEY UPDATE (VALUES(col) -> excluded.col)
-  - table options (ENGINE=, CHARSET=), ON UPDATE CURRENT_TIMESTAMP and inline KEY/INDEX are dropped
-  - functions sqlglot knows (NOW, IFNULL, CONCAT_WS, DATE_FORMAT, ...), LAST_INSERT_ID()
-  - SHOW TABLES / DATABASES / COLUMNS / CREATE TABLE / INDEX, DESCRIBE, SELECT VERSION(), SELECT DATABASE()
+  - INSERT IGNORE, ON DUPLICATE KEY UPDATE (VALUES(col) -> excluded.col), REPLACE INTO, the DEFAULT keyword
+  - inline KEY / INDEX / UNIQUE KEY -> CREATE INDEX (stored as table__name), RENAME TABLE, CHANGE COLUMN (rename)
+  - UPDATE ... JOIN -> UPDATE ... FROM, DELETE t FROM t JOIN ... -> DELETE ... WHERE EXISTS
+  - table options (ENGINE=, CHARSET=, COMMENT), ON UPDATE CURRENT_TIMESTAMP are dropped; UNSIGNED -> signed
+  - functions sqlglot knows (IFNULL, CONCAT_WS, DATE_FORMAT, ...) plus the _FUNCS table below
+  - SHOW TABLES / DATABASES / COLUMNS / CREATE TABLE / INDEX, DESCRIBE, information_schema.tables / columns,
+    SELECT VERSION(), SELECT DATABASE(); USE and SET NAMES / SESSION / ... are accepted as no-ops
   - errors come back as pymysql-style classes with MySQL codes: 1062, 1146, 1054, 1064, 1048, 1452, ...
 
 Not supported, raised as NotSupportedError (never silently wrong): stored procedures/functions,
@@ -81,9 +84,11 @@ _SQLITE_TO_MYSQL = [
 ]
 
 
-def _map_error(e):
+def _map_error(e, sql=""):
     """s3rds.sqlite.Error (HTTP status + server message) -> pymysql-style exception with a MySQL code."""
     msg = e.message or str(e)
+    if re.search(r"no such table", msg, re.I) and re.match(r"\s*DROP\s+TABLE\b", sql, re.I):
+        return OperationalError(1051, f"Unknown table ({msg})")
     if e.status == 0:
         return OperationalError(2013, f"Lost connection to MySQL server: {msg}")
     if e.status == 401:
@@ -180,17 +185,65 @@ def _result(columns, rows):
 # sqlglot may leave "ON DUPLICATE KEY UPDATE" or render "ON DUPLICATE KEY DO UPDATE SET"
 _ON_DUP = re.compile(r"\bON\s+DUPLICATE\s+KEY(?:\s+DO)?\s+UPDATE(?:\s+SET)?\b", re.I)
 _UPSERT_SPLIT = re.compile(r"\bON\s+CONFLICT\s+DO\s+UPDATE\s+SET\b", re.I)
-_DROP_INDEX_ON = re.compile(r"^\s*DROP\s+INDEX\s+(\S+)\s+ON\s+\S+", re.I)
 _TRUNCATE = re.compile(r"^\s*TRUNCATE\s+(?:TABLE\s+)?`?(\w+)`?\s*$", re.I)
 _VALUES_REF = re.compile(r"\bVALUES\s*\(\s*(\"?[A-Za-z_]\w*\"?)\s*\)", re.I)  # VALUES(col), never VALUES(1)
-# LAST_INSERT_ID(): SQLite's last_insert_rowid() is per connection and the server opens one per
-# request, so the driver substitutes the id it saw on its own last INSERT (MySQL's per-session semantics)
+# MySQL index names are per table, SQLite's are per database: an index is stored as table__name and the
+# prefix is added / stripped wherever the user sees a name (CREATE/DROP INDEX, SHOW INDEX, inline KEY)
+_CREATE_INDEX = re.compile(r"^\s*CREATE\s+(UNIQUE\s+)?INDEX\s+`?(\w+)`?\s+ON\s+`?(\w+)`?", re.I)
+_DROP_INDEX_ON = re.compile(r"^\s*DROP\s+INDEX\s+`?(\w+)`?\s+ON\s+`?(\w+)`?", re.I)
+_RENAME_TABLE = re.compile(r"^\s*RENAME\s+TABLE\s+(.+)$", re.I | re.S)
+_RENAME_PAIR = re.compile(r"`?(\w+)`?\s+TO\s+`?(\w+)`?", re.I)
+_SESSION_NOOP = re.compile(r"^\s*SET\s+(?!@)", re.I)       # SET NAMES / SESSION / time_zone / sql_mode ...
+_USE = re.compile(r"^\s*USE\s+`?(\w+)`?\s*$", re.I)
+# LAST_INSERT_ID() / DATABASE(): per-session values the server does not know; the driver fills them in
 _LAST_ID_TOKEN = "__S3RDS_LAST_INSERT_ID__"
+_DATABASE_TOKEN = "__S3RDS_DATABASE__"
 
 # MySQL functions sqlglot does not map for SQLite. ONE table, one line per function:
-# MySQL name -> SQLite SQL template; {0} = first argument (defaults to 'now' when there is none).
+# key = sqlglot's name for the node (node.sql_name(), or node.name for unknown functions);
+# value = SQLite SQL template with {0}, {1}, ... = the arguments ({0} defaults to 'now'), or a callable(node, args).
 # A function missing here comes back as error 1305 "FUNCTION does not exist" -- add a line, nothing else.
-_FUNCS = {  # {0}, {1}, ... = arguments; {0} defaults to 'now' when the call has none
+_UUID = ("LOWER(HEX(RANDOMBLOB(4))) || '-' || LOWER(HEX(RANDOMBLOB(2))) || '-4' || SUBSTR(LOWER(HEX(RANDOMBLOB(2))), 2) "
+         "|| '-' || SUBSTR('89ab', ABS(RANDOM()) % 4 + 1, 1) || SUBSTR(LOWER(HEX(RANDOMBLOB(2))), 2) || '-' || LOWER(HEX(RANDOMBLOB(6)))")
+_PAD = ("CASE WHEN LENGTH({0}) >= {1} THEN SUBSTR({0}, 1, {1}) "
+        "ELSE {left}SUBSTR(REPLACE(HEX(ZEROBLOB({1})), '00', {2}), 1, {1} - LENGTH({0})){right} END")
+_SUBSTRING_INDEX = {   # only the common n = 1 / n = -1 forms (before the first / after the last delimiter)
+    "1": "CASE WHEN INSTR({0}, {1}) > 0 THEN SUBSTR({0}, 1, INSTR({0}, {1}) - 1) ELSE {0} END",
+    "-1": "REPLACE({0}, RTRIM({0}, REPLACE({0}, {1}, '')), '')",
+}
+_DIFF = {"SECOND": "* 86400", "MINUTE": "* 1440", "HOUR": "* 24", "DAY": "", "WEEK": "/ 7"}
+
+
+def _date_add(node, args, sign):
+    amount = args[1].strip("'")
+    unit = node.args["unit"].name.lower() if node.args.get("unit") else "day"
+    modifier = f"'{sign}{amount} {unit}'"
+    if unit in ("hour", "minute", "second"):
+        return f"DATETIME({args[0]}, {modifier})"
+    # a DATE stays a DATE, a DATETIME stays a DATETIME (MySQL keeps the argument's type)
+    return f"CASE WHEN LENGTH({args[0]}) <= 10 THEN DATE({args[0]}, {modifier}) ELSE DATETIME({args[0]}, {modifier}) END"
+
+
+def _timestamp_diff(node, args):
+    unit = node.args["unit"].name.upper()
+    end, start = args[0], args[1]
+    if unit in ("MONTH", "YEAR", "QUARTER"):
+        months = (f"((CAST(STRFTIME('%Y', {end}) AS INTEGER) - CAST(STRFTIME('%Y', {start}) AS INTEGER)) * 12 "
+                  f"+ CAST(STRFTIME('%m', {end}) AS INTEGER) - CAST(STRFTIME('%m', {start}) AS INTEGER))")
+        return {"MONTH": months, "YEAR": f"({months} / 12)", "QUARTER": f"({months} / 3)"}[unit]
+    if unit not in _DIFF:
+        raise NotSupportedError(1582, f"TIMESTAMPDIFF unit {unit}")
+    return f"CAST((JULIANDAY({end}) - JULIANDAY({start})) {_DIFF[unit]} AS INTEGER)"
+
+
+def _substring_index(node, args):
+    template = _SUBSTRING_INDEX.get(args[2])
+    if not template:
+        raise NotSupportedError(1582, "SUBSTRING_INDEX supports count 1 and -1 only")
+    return template.format(*args)
+
+
+_FUNCS = {
     "NOW": "CURRENT_TIMESTAMP",
     "CURDATE": "CURRENT_DATE",
     "CURTIME": "CURRENT_TIME",
@@ -198,13 +251,53 @@ _FUNCS = {  # {0}, {1}, ... = arguments; {0} defaults to 'now' when the call has
     "FROM_UNIXTIME": "datetime({0}, 'unixepoch')",
     "UNIX_TO_TIME": "datetime({0}, 'unixepoch')",   # sqlglot's own node name for FROM_UNIXTIME
     "LAST_INSERT_ID": _LAST_ID_TOKEN,
+    "CURRENT_SCHEMA": f"'{_DATABASE_TOKEN}'",        # DATABASE()
+    "CURRENT_VERSION": "'8.0.0-s3rds'",              # VERSION()
     "TRUNC": "(CAST(({0}) * POWER(10, {1}) AS INTEGER) / POWER(10, {1}))",   # TRUNCATE(x, d); sqlglot drops d
     "LEFT": "SUBSTR({0}, 1, {1})",
     "RIGHT": "SUBSTR({0}, MAX(LENGTH({0}) - ({1}), 0) + 1)",   # RIGHT(s, 0) = '', RIGHT(s, n > len) = s
+    "REPEAT": "REPLACE(HEX(ZEROBLOB({1})), '00', {0})",
+    "PAD": lambda node, args: _PAD.format(*args, left="" if node.args.get("is_left") else f"{args[0]} || ",
+                                          right=f" || {args[0]}" if node.args.get("is_left") else ""),
+    "SUBSTRING_INDEX": _substring_index,
+    "YEAR": "CAST(STRFTIME('%Y', {0}) AS INTEGER)",
+    "MONTH": "CAST(STRFTIME('%m', {0}) AS INTEGER)",
+    "DAY": "CAST(STRFTIME('%d', {0}) AS INTEGER)",
+    "DAY_OF_MONTH": "CAST(STRFTIME('%d', {0}) AS INTEGER)",
+    "HOUR": "CAST(STRFTIME('%H', {0}) AS INTEGER)",
+    "MINUTE": "CAST(STRFTIME('%M', {0}) AS INTEGER)",
+    "SECOND": "CAST(STRFTIME('%S', {0}) AS INTEGER)",
+    "DAY_OF_WEEK": "(CAST(STRFTIME('%w', {0}) AS INTEGER) + 1)",      # MySQL: 1 = Sunday
+    "DAY_OF_YEAR": "CAST(STRFTIME('%j', {0}) AS INTEGER)",
+    "WEEK_OF_YEAR": "CAST(STRFTIME('%W', {0}) AS INTEGER)",
+    "DATE_ADD": lambda node, args: _date_add(node, args, "+"),
+    "DATE_SUB": lambda node, args: _date_add(node, args, "-"),
+    "TIMESTAMPDIFF": _timestamp_diff,
+    "JSON_EXTRACT": "({0} -> {1})",      # JSON_EXTRACT / ->: JSON text, as MySQL returns it ('1', '"x"', '{"a":1}')
+    "JSON_EXTRACT_SCALAR": "({0} ->> {1})",   # ->>: the SQL value (a number comes back as int, MySQL gives '1')
+    "JSON_UNQUOTE": "CASE WHEN JSON_VALID({0}) THEN JSON_EXTRACT({0}, '$') ELSE {0} END",
+    "RAND": "(ABS(RANDOM()) / 9223372036854775808.0)",
+    "UUID": _UUID,
+}
+
+# information_schema views, answered from sqlite_master / PRAGMA table-valued functions
+_INFORMATION_SCHEMA = {
+    "tables": (f"SELECT name AS table_name, '{_DATABASE_TOKEN}' AS table_schema, 'BASE TABLE' AS table_type, "
+               "'InnoDB' AS engine FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"),
+    "columns": (f"SELECT m.name AS table_name, '{_DATABASE_TOKEN}' AS table_schema, p.name AS column_name, "
+                "p.cid + 1 AS ordinal_position, LOWER(p.type) AS column_type, LOWER(p.type) AS data_type, "
+                "CASE WHEN p.\"notnull\" THEN 'NO' ELSE 'YES' END AS is_nullable, p.dflt_value AS column_default, "
+                "CASE WHEN p.pk THEN 'PRI' ELSE '' END AS column_key "
+                "FROM sqlite_master m JOIN pragma_table_info(m.name) p WHERE m.type = 'table' AND m.name NOT LIKE 'sqlite_%'"),
 }
 
 
 def _rewrite_funcs(node):
+    if isinstance(node, exp.Table) and node.db and node.db.lower() == "information_schema":
+        view = _INFORMATION_SCHEMA.get(node.name.lower())
+        if view is None:
+            raise NotSupportedError(1235, f"information_schema.{node.name} is not available")
+        return exp.Subquery(this=sqlglot.parse_one(view, read="sqlite"), alias=exp.to_identifier(node.alias or node.name))
     if not isinstance(node, exp.Func):
         return node
     # unknown functions are exp.Anonymous whose real name is node.name; known ones answer to sql_name()
@@ -216,38 +309,62 @@ def _rewrite_funcs(node):
         [v for v in node.args.values() if isinstance(v, exp.Expression)]
     arg_sql = [a.sql(dialect="sqlite") for a in args] or ["'now'"]
     try:
-        text = template.format(*arg_sql)
+        text = template(node, arg_sql) if callable(template) else template.format(*arg_sql)
     except IndexError:
         raise NotSupportedError(1582, f"wrong number of arguments for {name}()") from None
     return exp.maybe_parse(text, dialect="sqlite")
 
 
+_UNSIGNED = {"UINT": "INT", "UBIGINT": "BIGINT", "USMALLINT": "SMALLINT", "UTINYINT": "TINYINT",
+             "UMEDIUMINT": "MEDIUMINT", "UDECIMAL": "DECIMAL", "UDOUBLE": "DOUBLE"}
+_DROPPED_CONSTRAINTS = (exp.OnUpdateColumnConstraint, exp.CharacterSetColumnConstraint,
+                        exp.CommentColumnConstraint, exp.CollateColumnConstraint)
+
+
+def _index_sql(table, name, cols, unique):
+    name = name or cols[0]   # MySQL names an unnamed index after its first column
+    return f'CREATE {"UNIQUE " if unique else ""}INDEX "{table}__{name}" ON "{table}" ({", ".join(cols)})'
+
+
 def _fix_create_table(tree):
-    """MySQL CREATE TABLE -> something SQLite accepts with MySQL-like semantics."""
+    """MySQL CREATE TABLE -> something SQLite accepts with MySQL-like semantics.
+    Returns the CREATE INDEX statements for inline KEY / INDEX / named UNIQUE KEY definitions."""
     if not (isinstance(tree, exp.Create) and (tree.args.get("kind") or "").upper() == "TABLE"):
-        return
+        return []
     schema = tree.this
     if not isinstance(schema, exp.Schema):
-        return
+        return []
     tree.set("properties", None)  # ENGINE=, CHARSET=, COMMENT=, ...
+    table = schema.this.name
 
-    kept, table_pk_cols = [], set()
+    kept, indexes, table_pk_cols = [], [], set()
     for item in schema.expressions:
         if isinstance(item, exp.PrimaryKey):
             cols = [c.name for c in item.expressions]
             if len(cols) == 1:          # single-column PK: moved into the column (needed for AUTOINCREMENT)
                 table_pk_cols.add(cols[0])
                 continue
+        if isinstance(item, exp.IndexColumnConstraint):
+            indexes.append(_index_sql(table, item.name, [c.name for c in item.expressions], False))
+            continue
+        if isinstance(item, exp.UniqueColumnConstraint) and isinstance(item.this, exp.Schema) and item.this.this:
+            indexes.append(_index_sql(table, item.this.this.name, [c.name for c in item.this.expressions], True))
+            continue
         if isinstance(item, (exp.ColumnDef, exp.PrimaryKey, exp.ForeignKey, exp.Constraint,
-                             exp.CheckColumnConstraint)) or "Unique" in type(item).__name__:
-            kept.append(item)           # inline KEY/INDEX definitions are dropped (CREATE INDEX separately)
+                             exp.CheckColumnConstraint, exp.UniqueColumnConstraint)):
+            kept.append(item)
 
     for col in kept:
         if not isinstance(col, exp.ColumnDef):
             continue
         kind = col.args.get("kind")
-        constraints = [c for c in (col.args.get("constraints") or [])
-                       if not isinstance(c.kind, exp.OnUpdateColumnConstraint)]
+        if kind is not None and kind.this.name in _UNSIGNED:
+            col.set("kind", exp.DataType.build(_UNSIGNED[kind.this.name]))
+            kind = col.args["kind"]
+        all_constraints = col.args.get("constraints") or []
+        binary = any(isinstance(c.kind, exp.CollateColumnConstraint) and c.kind.this.name.lower().endswith(("_bin", "_cs"))
+                     for c in all_constraints)
+        constraints = [c for c in all_constraints if not isinstance(c.kind, _DROPPED_CONSTRAINTS)]
         kinds = [type(c.kind) for c in constraints]
         is_pk = exp.PrimaryKeyColumnConstraint in kinds or col.name in table_pk_cols
         is_auto = exp.AutoIncrementColumnConstraint in kinds
@@ -262,8 +379,7 @@ def _fix_create_table(tree):
         if is_auto:
             col.set("kind", exp.DataType.build("INTEGER"))
             is_pk = True
-        if kind is not None and kind.this in exp.DataType.TEXT_TYPES \
-                and exp.CollateColumnConstraint not in kinds:
+        if kind is not None and kind.this in exp.DataType.TEXT_TYPES and not binary:
             constraints.append(exp.ColumnConstraint(kind=exp.CollateColumnConstraint(this=exp.var("NOCASE"))))
 
         others = [c for c in constraints
@@ -276,25 +392,116 @@ def _fix_create_table(tree):
         col.set("constraints", others + tail)
 
     schema.set("expressions", kept)
+    return indexes
+
+
+def _fix_alter(tree):
+    """ALTER TABLE MODIFY / CHANGE: SQLite cannot change a column's type, so a CHANGE becomes a RENAME COLUMN
+    and a type-only MODIFY is a no-op (SQLite is dynamically typed). Returns the statements to run."""
+    if not isinstance(tree, exp.Alter):
+        return None
+    out = []
+    for action in tree.args.get("actions") or []:
+        if isinstance(action, exp.ModifyColumn) if hasattr(exp, "ModifyColumn") else False:
+            old = action.args.get("rename_from")
+            if old is not None and old.name != action.this.name:
+                out.append(f'ALTER TABLE "{tree.this.name}" RENAME COLUMN "{old.name}" TO "{action.this.name}"')
+        else:
+            return None   # anything else: let sqlglot render it
+    return out
+
+
+def _fix_insert(tree):
+    """VALUES () -> DEFAULT VALUES; a DEFAULT keyword drops its column from the statement."""
+    if not isinstance(tree, exp.Insert) or not isinstance(tree.expression, exp.Values):
+        return
+    rows = tree.expression.expressions
+    if len(rows) == 1 and not rows[0].expressions:
+        return f'INSERT INTO "{tree.this.find(exp.Table).name}" DEFAULT VALUES'
+    schema = tree.this
+    if not isinstance(schema, exp.Schema):
+        return
+    default_cols = {i for i, v in enumerate(rows[0].expressions) if isinstance(v, exp.Var) and v.name.upper() == "DEFAULT"}
+    if not default_cols:
+        return
+    for row in rows:
+        if {i for i, v in enumerate(row.expressions) if isinstance(v, exp.Var) and v.name.upper() == "DEFAULT"} != default_cols:
+            raise NotSupportedError(1582, "DEFAULT must be used in the same columns of every row")
+    schema.set("expressions", [c for i, c in enumerate(schema.expressions) if i not in default_cols])
+    for row in rows:
+        row.set("expressions", [v for i, v in enumerate(row.expressions) if i not in default_cols])
+
+
+def _fix_update_join(tree):
+    """UPDATE t JOIN o ON ... SET t.a = o.b [WHERE w]  ->  UPDATE t SET a = o.b FROM o WHERE ... AND w"""
+    if not isinstance(tree, exp.Update) or not tree.this.args.get("joins"):
+        return None
+    target = tree.this
+    joins = target.args["joins"]
+    conds = [j.args["on"] for j in joins if j.args.get("on")]
+    if tree.args.get("where"):
+        conds.append(tree.args["where"].this)
+    sets = []
+    for e in tree.expressions:
+        col = e.this
+        if isinstance(col, exp.Column) and col.table == target.name:
+            col.set("table", None)
+        sets.append(e.sql(dialect="sqlite"))
+    from_tables = ", ".join(j.this.sql(dialect="sqlite") for j in joins)
+    where = " AND ".join(f"({c.sql(dialect='sqlite')})" for c in conds)
+    return f'UPDATE "{target.name}" SET {", ".join(sets)} FROM {from_tables} WHERE {where}'
+
+
+def _fix_delete_join(tree):
+    """DELETE t FROM t JOIN o ON ... [WHERE w]  ->  DELETE FROM t WHERE EXISTS (SELECT 1 FROM o WHERE ... AND w)"""
+    if not isinstance(tree, exp.Delete) or not tree.this.args.get("joins"):
+        return None
+    target = tree.this
+    joins = target.args["joins"]
+    conds = [j.args["on"] for j in joins if j.args.get("on")]
+    if tree.args.get("where"):
+        conds.append(tree.args["where"].this)
+    from_tables = ", ".join(j.this.sql(dialect="sqlite") for j in joins)
+    where = " AND ".join(f"({c.sql(dialect='sqlite')})" for c in conds)
+    return f'DELETE FROM "{target.name}" WHERE EXISTS (SELECT 1 FROM {from_tables} WHERE {where})'
 
 
 @functools.lru_cache(maxsize=1024)
-def _translate(sql):
+def _translate_stmts(sql):
+    """MySQL statement -> tuple of SQLite statements (usually one; CREATE TABLE with inline indexes and
+    RENAME TABLE give several, a type-only ALTER gives none)."""
     if sqlglot is None:
         raise NotSupportedError(0, "the MySQL dialect needs sqlglot: pip install 's3rds[mysql]'")
+    m = _RENAME_TABLE.match(sql)
+    if m:
+        return tuple(f'ALTER TABLE "{a}" RENAME TO "{b}"' for a, b in _RENAME_PAIR.findall(m.group(1)))
+    m = _CREATE_INDEX.match(sql)
+    if m:
+        sql = _CREATE_INDEX.sub(lambda m: f'CREATE {m.group(1) or ""}INDEX "{m.group(3)}__{m.group(2)}" ON "{m.group(3)}"', sql, 1)
+    m = _DROP_INDEX_ON.match(sql)
+    if m:
+        return (f'DROP INDEX "{m.group(2)}__{m.group(1)}"',)
     try:
         tree = sqlglot.parse_one(sql, read="mysql")
     except ParseError as e:
         raise ProgrammingError(1064, f"You have an error in your SQL syntax ({e})") from None
-    _fix_create_table(tree)
+    for fix in (_fix_alter, _fix_update_join, _fix_delete_join, _fix_insert):
+        rewritten = fix(tree)
+        if rewritten is not None:
+            return tuple(rewritten) if isinstance(rewritten, list) else (rewritten,)
+    indexes = _fix_create_table(tree)
     tree = tree.transform(_rewrite_funcs)
     out = tree.sql(dialect="sqlite")
-    out = _DROP_INDEX_ON.sub(r"DROP INDEX \1", out)       # MySQL: DROP INDEX name ON table; SQLite: no ON
     out = _ON_DUP.sub("ON CONFLICT DO UPDATE SET", out)   # upsert
     parts = _UPSERT_SPLIT.split(out, maxsplit=1)
     if len(parts) == 2:  # VALUES(col) -> excluded.col, only inside the DO UPDATE SET clause
         out = parts[0] + "ON CONFLICT DO UPDATE SET" + _VALUES_REF.sub(r"excluded.\1", parts[1])
-    return out
+    return (out, *indexes)
+
+
+def _translate(sql):
+    """One MySQL statement -> SQLite SQL (statements joined with '; ' when there are several)."""
+    return "; ".join(_translate_stmts(sql))
 
 
 # ---------------- connection ----------------
@@ -315,7 +522,10 @@ class Connection(_sqlite.Connection):
         return sql
 
     def _finalize(self, translated):
-        return translated.replace(_LAST_ID_TOKEN, str(self._last_insert_id))
+        return translated.replace(_LAST_ID_TOKEN, str(self._last_insert_id)).replace(_DATABASE_TOKEN, self.database)
+
+    def _noop(self, sql):
+        return self._remember({"columns": [], "rows": [], "rowcount": 0, "lastrowid": None}, sql)
 
     def _has_autoincrement(self, sql):
         """MySQL reports lastrowid 0 unless the table has AUTO_INCREMENT; SQLite always has a rowid."""
@@ -359,25 +569,38 @@ class Connection(_sqlite.Connection):
             ])
             return self._remember({"columns": [], "rows": [], "rowcount": 0, "lastrowid": None,
                                    "ms": self.last.get("ms"), "s3": self.last.get("s3")}, sql)
+        m = _USE.match(sql)
+        if m:
+            self.database = m.group(1)
+            return self._noop(sql)
+        if _SESSION_NOOP.match(sql):   # SET NAMES / SESSION / sql_mode / time_zone: nothing to configure here
+            return self._noop(sql)
         qmark, args = _bind(sql, params)
+        stmts = _translate_stmts(qmark)
         try:
-            return self._remember(super().execute(self._finalize(_translate(qmark)), args), sql)
+            if len(stmts) == 1:
+                return self._remember(super().execute(self._finalize(stmts[0]), args), sql)
+            if not stmts:
+                return self._noop(sql)
+            results = _sqlite.Connection.transaction(self, [(self._finalize(stmts[0]), args)] + [(self._finalize(x), []) for x in stmts[1:]])
+            return self._remember(results[0], sql)
         except _sqlite.Error as e:
-            raise _map_error(e) from None
+            raise _map_error(e, sql) from None
 
     def transaction(self, statements):
         prepared = []
         for s in statements:
             sql, params = (s, []) if isinstance(s, str) else (s[0], s[1] if len(s) > 1 else [])
             qmark, args = _bind(self._prepare(sql), params)
-            prepared.append((self._finalize(_translate(qmark)), args))
+            stmts = _translate_stmts(qmark)
+            prepared += [(self._finalize(stmts[0]), args)] + [(self._finalize(x), []) for x in stmts[1:]]
         try:
             results = super().transaction(prepared)
         except _sqlite.Error as e:
             raise _map_error(e) from None
         for r, (sql, _) in zip(results, prepared):
             self._remember(r, sql)
-        return results
+        return results[:len(statements)] if len(results) > len(statements) else results
 
     def create_database(self):
         try:
@@ -400,7 +623,8 @@ class Connection(_sqlite.Connection):
             if origin == "pk":
                 continue
             cols = [c for _s, _cid, c in self._raw(f'PRAGMA index_info("{name}")')["rows"]]
-            out.append((cols[0] if name.startswith("sqlite_autoindex_") else name, bool(unique), cols))
+            shown = cols[0] if name.startswith("sqlite_autoindex_") else name.split("__", 1)[1] if name.startswith(table + "__") else name
+            out.append((shown, bool(unique), cols))
         return out
 
     def _meta(self, m):

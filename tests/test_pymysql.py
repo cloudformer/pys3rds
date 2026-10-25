@@ -61,7 +61,8 @@ def test_translate_create_table():
     assert "INTEGER PRIMARY KEY AUTOINCREMENT" in up
     assert "COLLATE NOCASE" in up
     assert "CHECK" in up and "'A'" in up
-    assert "ENGINE" not in up and "ON UPDATE" not in up and "IDX_NAME" not in up
+    assert "ENGINE" not in up and "ON UPDATE" not in up
+    assert 'CREATE INDEX "USERS__IDX_NAME" ON "USERS" (NAME)' in up   # inline KEY becomes a second statement
 
 
 def test_translate_table_level_pk_moves_into_column():
