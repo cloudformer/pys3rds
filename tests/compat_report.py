@@ -113,11 +113,11 @@ def render():
             if not feat:
                 cat, feat = "General", cat
             groups.setdefault(cat, []).append((nid, feat, f))
+        lines += ["| Category | Status | Feature | Notes |", "|---|---|---|---|"]
         for cat in sorted(groups, key=lambda c: (CATEGORY_ORDER.index(c) if c in CATEGORY_ORDER else 99, c)):
-            lines += [f"### {cat}", "", "| Status | Feature | Notes |", "|---|---|---|"]
             for nid, feat, f in sorted(groups[cat], key=lambda x: (order[outcomes.get(x[0], "not run")], x[1])):
-                lines.append(f"| {STATUS[outcomes.get(nid, 'not run')]} | {feat} | {f['gap'] or ''} |")
-            lines.append("")
+                lines.append(f"| {cat} | {STATUS[outcomes.get(nid, 'not run')]} | {feat} | {f['gap'] or ''} |")
+        lines.append("")
     return "\n".join(lines)
 
 
