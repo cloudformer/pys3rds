@@ -37,7 +37,8 @@ with open(os.path.join(os.path.dirname(__file__), "index.html"), encoding="utf-8
 
 NAME = r"[A-Za-z0-9_-]{1,64}"  # 库名/表名共用的合法模式
 NAME_RE = re.compile(NAME + r"$")
-MAX_ROWS = 500  # 单次返回的行数上限,超出在响应里标 truncated
+MAX_ROWS = 500           # 控制台 browse 单页行数上限(UI 习惯,与驱动无关)
+PAGE_BYTES = 4 * 1024 * 1024  # /query 结果单页字节上限,留足 Lambda 6MB 响应余量
 
 
 class BadRequest(Exception):
@@ -46,6 +47,10 @@ class BadRequest(Exception):
 
 class Forbidden(Exception):
     pass
+
+
+class VersionChanged(Exception):
+    """翻页时数据库已被写入:上一页和下一页不是同一个版本,拒绝混着返回。"""
 
 
 # ---------------- 基础工具 ----------------
@@ -178,23 +183,31 @@ def _prepare(stmt, where="请求"):
     return sql, params
 
 
-def _exec_one(c, sql, params):
+def _exec_one(c, sql, params, offset=0):
+    """执行一条;结果集按字节分页:跳过 offset 行后最多装 PAGE_BYTES,还有剩就 has_more。"""
     cur = c.execute(sql, params)
-    if cur.description:
-        rows = cur.fetchmany(MAX_ROWS + 1)
-        return {
-            "columns": [d[0] for d in cur.description],
-            "rows": [list(r) for r in rows[:MAX_ROWS]],
-            "rowcount": -1,
-            "truncated": len(rows) > MAX_ROWS,
-        }
-    return {"columns": [], "rows": [], "rowcount": cur.rowcount,
-            "lastrowid": cur.lastrowid}
+    if not cur.description:
+        return {"columns": [], "rows": [], "rowcount": cur.rowcount, "lastrowid": cur.lastrowid}
+    skipped = 0
+    while skipped < offset:
+        chunk = cur.fetchmany(min(1000, offset - skipped))
+        if not chunk:
+            break
+        skipped += len(chunk)
+    rows, size, has_more = [], 0, False
+    for row in cur:
+        row = list(row)
+        rows.append(row)
+        size += len(json.dumps(row, default=str)) + 2
+        if size >= PAGE_BYTES:
+            has_more = cur.fetchone() is not None
+            break
+    return {"columns": [d[0] for d in cur.description], "rows": rows, "rowcount": -1,
+            "lastrowid": None, "has_more": has_more, "next_offset": offset + len(rows)}
 
 
-def _run(db, fn):
+def _run(inst, fn):
     """按入口选 read/run,附带耗时和 S3 动作;只读入口上的写被 SQLite 拒绝 → 403。"""
-    inst = _db(db)
     t0 = time.perf_counter()
     try:
         result = inst.read(fn) if READONLY else inst.run(fn)
@@ -207,9 +220,40 @@ def _run(db, fn):
     return result
 
 
+def _token(sql, params, offset, etag):
+    return base64.b64encode(json.dumps(
+        {"sql": sql, "params": params, "offset": offset, "etag": etag}).encode()).decode()
+
+
 def query(event, db):
-    sql, params = _prepare(_body(event))
-    return _run(db, lambda c: _exec_one(c, sql, params))
+    """一条 SQL。结果超过 PAGE_BYTES 时带 next_token;下一页只传 next_token。
+    token 里带着发页时的数据库版本(ETag),翻页时版本变了 → 409 VersionChanged,客户端从头重跑。"""
+    body = _body(event)
+    token = body.get("next_token")
+    if token:
+        try:
+            state = json.loads(base64.b64decode(token))
+            sql, params, offset, want = state["sql"], state["params"], int(state["offset"]), state["etag"]
+        except Exception:
+            raise BadRequest("invalid next_token") from None
+    else:
+        sql, params = _prepare(body)
+        offset, want = 0, None
+
+    inst = _db(db)
+
+    def fn(c):
+        if want is not None and inst.etag != want:
+            raise VersionChanged()
+        return _exec_one(c, sql, params, offset)
+
+    result = _run(inst, fn)
+    has_more = result.pop("has_more", False)
+    next_offset = result.pop("next_offset", None)
+    if has_more:
+        result["next_token"] = _token(sql, params, next_offset, inst.etag)
+    result["truncated"] = has_more  # 0.1.0 客户端看的字段;新客户端见到 truncated 且无 next_token 会报错
+    return result
 
 
 def tx(event, db):
@@ -221,9 +265,16 @@ def tx(event, db):
     prepared = [_prepare(s, f"statements[{i}]") for i, s in enumerate(stmts)]
 
     def fn(c):
-        return {"results": [_exec_one(c, sql, params) for sql, params in prepared]}
+        results = []
+        for i, (sql, params) in enumerate(prepared):
+            r = _exec_one(c, sql, params)
+            if r.pop("has_more", False):  # 事务里不分页:结果超页大小就明确报错
+                raise BadRequest(f"statements[{i}] result exceeds {PAGE_BYTES} bytes; run it as a plain query")
+            r.pop("next_offset", None)
+            results.append(r)
+        return {"results": results}
 
-    return _run(db, fn)
+    return _run(_db(db), fn)
 
 
 ROUTES = [
@@ -270,6 +321,8 @@ def lambda_handler(event, context):
         status, data = 404, {"error": f"database not found: {e}"}
     except WriteConflict as e:
         status, data = 409, {"error": str(e)}
+    except VersionChanged:
+        status, data = 409, {"error": "database version changed while paging; re-run the query"}
     except sqlite3.Error as e:
         status, data = 400, {"error": f"{type(e).__name__}: {e}"}
     except Exception as e:

@@ -43,8 +43,13 @@ conn.transaction([                                 # all-or-nothing, single S3 w
 
 ## Semantics
 
-- Each `execute()` is its own transaction and is durable in S3 when it returns (`autocommit=True`).
-  Use `transaction()` for multi-statement atomicity.
+- **Transactions**: each `execute()` is its own transaction and is durable in S3 when it returns
+  (like `autocommit=True`). `commit()` is a no-op. `rollback()` **cannot undo statements that already
+  ran** — it warns if anything was written since the last `commit()` (and stays silent otherwise, so
+  pools and ORMs may call it freely). For all-or-nothing writes use `transaction([...])`, which runs
+  several statements as one commit and one S3 write.
+- Large results are paged by the server (4 MB per page) and reassembled inside `execute()`; `rows`
+  is always complete. If the database changes while paging, the query is re-run rather than mixing versions.
 - Writes **never** duplicate: the driver re-sends only when the request provably never reached the
   server (stale keep-alive connection). Timeouts raise an error with an explicit "result unknown".
 - `s3rds.pymysql` raises pymysql-style exceptions with MySQL error codes (1062, 1146, 1054, 1064, …);

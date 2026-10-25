@@ -133,6 +133,15 @@ curl -s -u "admin:password" -H "content-type: application/json" \
 | **No duplicate writes** | the driver re-sends only when the request provably never reached the server; timeouts raise "result unknown" |
 | **Availability** | Lambda and S3 are regional, multi-AZ services: no instance to fail, no AZ to lose, no maintenance window. Higher than a single-AZ RDS instance (which carries no SLA); Multi-AZ RDS costs 2× to match |
 
+**Transactions, concretely.** Every statement is committed and durable in S3 the moment `execute()` returns.
+`commit()` is a no-op. `rollback()` cannot undo statements that already ran — the driver warns if anything
+was written since the last `commit()`, and stays silent otherwise. When several statements must succeed or
+fail together, use `conn.transaction([...])` (one commit, one S3 write) or `cursor.executemany(...)`.
+
+**Large results.** The server pages results at 4 MB and the driver fetches every page inside `execute()`,
+so you always get the complete result; nothing is ever truncated silently. If the database changes while
+paging, the server refuses to mix versions and the driver re-runs the query.
+
 All of this is pinned by tests against an in-memory S3 that implements ETag / `If-Match` / `If-None-Match` semantics:
 
 ```bash

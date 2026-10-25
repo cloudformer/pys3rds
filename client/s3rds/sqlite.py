@@ -30,12 +30,15 @@ Retry policy -- fail rather than duplicate a write:
 (A connection is not thread-safe; use one per thread.)
 """
 import base64
+import datetime
+import decimal
 import http.client
 import json
 import socket
 import urllib.parse
+import warnings
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 apilevel = "2.0"
 threadsafety = 1
@@ -61,6 +64,32 @@ class _NotDelivered(Exception):
         super().__init__(str(cause))
         self.cause = cause
         self.reused = reused  # happened on a reused keep-alive connection (idle connection closed by peer)
+
+
+# ---------------- parameters: Python values -> what JSON (and SQLite) can carry ----------------
+
+def _encode_value(value, index):
+    if value is None or isinstance(value, (int, float, str)) and not isinstance(value, bool):
+        return value
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, datetime.datetime):  # before date: datetime is a date subclass
+        text = value.strftime("%Y-%m-%d %H:%M:%S")
+        return f"{text}.{value.microsecond:06d}" if value.microsecond else text
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    if isinstance(value, datetime.time):
+        text = value.strftime("%H:%M:%S")
+        return f"{text}.{value.microsecond:06d}" if value.microsecond else text
+    if isinstance(value, decimal.Decimal):
+        return str(value)  # keeps the precision; never a float
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        raise Error(0, f"parameter #{index}: binary parameters are not supported yet")
+    raise Error(0, f"parameter #{index}: type {type(value).__name__} cannot be encoded")
+
+
+def _encode_params(params):
+    return [_encode_value(v, i + 1) for i, v in enumerate(params or [])]
 
 
 # ---------------- placeholders: %s (pymysql style) -> ? (SQLite) ----------------
@@ -117,9 +146,15 @@ class Cursor:
         return self.rowcount
 
     def executemany(self, sql, seq_of_params):
-        """Same statement, several parameter sets, one transaction (all or nothing)."""
-        self.connection.transaction([(sql, p) for p in seq_of_params])
-        self.rowcount = len(seq_of_params)
+        """Same statement, several parameter sets, one transaction (all or nothing).
+
+        rowcount = rows actually affected, summed; lastrowid = the last statement's.
+        """
+        results = self.connection.transaction([(sql, p) for p in seq_of_params])
+        self.rowcount = sum(max(r.get("rowcount", 0), 0) for r in results)
+        self.lastrowid = results[-1].get("lastrowid") if results else None
+        self.description = None
+        self._rows, self._pos = [], 0
         return self.rowcount
 
     def fetchone(self):
@@ -181,6 +216,7 @@ class Connection:
         self._conn = None  # reused HTTPS keep-alive connection
         # server-side metrics of the last call: {"ms": ..., "s3": "cache-hit" | "download" | "...+upload"}
         self.last = {}
+        self._written = False  # a write landed in S3 since the last commit() (drives the rollback() warning)
 
     # ---- transport ----
 
@@ -258,10 +294,18 @@ class Connection:
         return (cursorclass or self.cursorclass)(self)
 
     def commit(self):
-        """Every statement is already committed and durable; kept for pymysql compatibility."""
+        """Every statement is already committed and durable when execute() returns; this only clears
+        the 'written since last commit' flag (kept for pymysql compatibility)."""
+        self._written = False
 
     def rollback(self):
-        """Nothing pending to roll back; kept for compatibility. Use transaction() for multi-statement atomicity."""
+        """Cannot undo anything: statements are durable as soon as they run. If something was written
+        since the last commit() this warns (never silent); with nothing written it stays quiet, because
+        pools and ORMs call rollback() when returning a connection. Multi-statement atomicity: transaction()."""
+        if self._written:
+            warnings.warn("s3rds: rollback() cannot undo statements that already ran; "
+                          "use transaction() for all-or-nothing writes", RuntimeWarning, stacklevel=2)
+        self._written = False
 
     def close(self):
         self._drop()
@@ -289,14 +333,43 @@ class Connection:
         return self._get("/api/databases").get("databases", [])
 
     def execute(self, sql, params=()):
-        """Run one statement (? or %s placeholders). Returns {columns, rows, rowcount, lastrowid, truncated, ms, s3}."""
-        r = self._post(f"/api/db/{self.database}/query",
-                       {"sql": _to_qmark(sql), "params": list(params)})
+        """Run one statement (? or %s placeholders). Returns {columns, rows, rowcount, lastrowid, ms, s3}.
+
+        Large results come back from the server in pages; all pages are fetched here, so `rows` is
+        always complete. If the database changes while paging the server refuses to mix versions
+        (409) and the whole query is re-run, up to 3 times.
+        """
+        path = f"/api/db/{self.database}/query"
+        payload = {"sql": _to_qmark(sql), "params": _encode_params(params)}
+        for attempt in range(3):
+            try:
+                return self._fetch_pages(path, payload)
+            except Error as e:
+                if e.status == 409 and "version changed" in e.message and attempt < 2:
+                    continue
+                raise
+
+    def _fetch_pages(self, path, payload):
+        first = self._post(path, payload)
+        if first.get("truncated") and not first.get("next_token"):
+            raise Error(0, "the server truncated the result (server older than 0.1.1); upgrade the server")
+        rows, page = first["rows"], first
+        while page.get("next_token"):
+            page = self._post(path, {"next_token": page["next_token"]})
+            rows += page["rows"]
+        first["rows"] = rows
+        first.pop("truncated", None)
+        first.pop("next_token", None)
+        self._note(first)
+        return first
+
+    def _note(self, r):
         self.last = {"ms": r.get("ms"), "s3": r.get("s3")}
-        return r
+        if "+upload" in (r.get("s3") or ""):  # the server only uploads when data actually changed
+            self._written = True
 
     def query(self, sql, params=()):
-        """SELECT helper returning [dict, ...]. Results over 500 rows are truncated (see execute()['truncated'])."""
+        """SELECT helper returning the complete result as [dict, ...]."""
         r = self.execute(sql, params)
         return [dict(zip(r["columns"], row)) for row in r["rows"]]
 
@@ -306,10 +379,10 @@ class Connection:
         Each item is "sql" or (sql, params). Returns one result per statement.
         """
         stmts = [{"sql": _to_qmark(s), "params": []} if isinstance(s, str)
-                 else {"sql": _to_qmark(s[0]), "params": list(s[1]) if len(s) > 1 else []}
+                 else {"sql": _to_qmark(s[0]), "params": _encode_params(s[1] if len(s) > 1 else [])}
                  for s in statements]
         r = self._post(f"/api/db/{self.database}/tx", {"statements": stmts})
-        self.last = {"ms": r.get("ms"), "s3": r.get("s3")}
+        self._note(r)
         return r["results"]
 
 

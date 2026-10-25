@@ -158,6 +158,11 @@ class SqliteS3:
         """本地副本状态不可信时调用:作废缓存,下次强制重拉。"""
         SqliteS3._etags.pop(self.local, None)
 
+    @property
+    def etag(self):
+        """当前本地副本对应的 S3 版本(ETag);read/run 之后有效。"""
+        return SqliteS3._etags.get(self.local)
+
     def _ensure_fresh(self):
         try:
             head = s3.head_object(Bucket=self.bucket, Key=self.key)
