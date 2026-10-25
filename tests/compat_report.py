@@ -17,7 +17,13 @@ versions = {"mysql": None}
 suite = {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0}  # every test in the run
 
 STATUS = {"verified": "✅ verified", "gap": "❌ gap", "regression": "🔴 regression",
-          "fixed": "🟡 fixed — remove xfail marker", "not run": "⏭ not run"}
+          "fixed": "🟡 fixed — remove xfail marker", "unsupported": "⛔ unsupported by design",
+          "not run": "⏭ not run"}
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "unsupported(reason): the feature is rejected on purpose "
+                            "(NotSupportedError); the test passes when s3rds refuses it cleanly")
 
 
 def pytest_collection_modifyitems(items):
@@ -28,11 +34,14 @@ def pytest_collection_modifyitems(items):
         kind = "mysql" if "test_mysql" in nodeid else "sqlite" if "test_sqlite" in nodeid else None
         if not kind:
             continue
-        mark = item.get_closest_marker("xfail")
+        xfail = item.get_closest_marker("xfail")
+        unsupported = item.get_closest_marker("unsupported")
         features[item.nodeid] = {
             "suite": kind,
             "feature": (item.function.__doc__ or item.name).strip().splitlines()[0],
-            "gap": mark.kwargs.get("reason") if mark else None,
+            "gap": xfail.kwargs.get("reason") if xfail else
+                   (unsupported.kwargs.get("reason") or (unsupported.args[0] if unsupported.args else "")) if unsupported else None,
+            "unsupported": bool(unsupported),
         }
 
 
@@ -53,6 +62,7 @@ def pytest_runtest_logreport(report):
         outcomes[report.nodeid] = (
             "gap" if report.outcome == "skipped" and xfail else        # xfailed
             "fixed" if report.outcome == "passed" and xfail else       # xpassed: remove the marker
+            "unsupported" if report.outcome == "passed" and features[report.nodeid]["unsupported"] else
             "verified" if report.outcome == "passed" else "regression")
 
 
@@ -79,6 +89,7 @@ def render():
         "Each row is one feature exercised with the same SQL on the reference database and on s3rds; "
         "results, Python types, rowcount, lastrowid and error codes must match. "
         "**verified** = may be listed as supported · **gap** = known difference, named after the task that closes it · "
+        "**unsupported by design** = s3rds refuses it with NotSupportedError (needs a real server) · "
         "**regression** = was verified, now differs.", "",
         f"Whole test run: **{suite['passed']} passed**, {suite['failed']} failed, "
         f"{suite['xfailed']} expected failures (known gaps), {suite['skipped']} skipped "
@@ -87,12 +98,24 @@ def render():
     for kind, title, ref in [("mysql", "s3rds.pymysql vs MySQL", versions["mysql"] or "MySQL (not run)"),
                              ("sqlite", "s3rds.sqlite vs sqlite3", f"SQLite {sqlite3.sqlite_version} (standard library)")]:
         rows = [(nid, f) for nid, f in features.items() if f["suite"] == kind]
-        lines += [f"## {title} — reference: {ref}", "", _counts(kind), "",
-                  "| Status | Feature | Notes |", "|---|---|---|"]
-        for nid, f in sorted(rows, key=lambda x: (outcomes.get(x[0], "not run") != "verified", x[1]["feature"])):
-            lines.append(f"| {STATUS[outcomes.get(nid, 'not run')]} | {f['feature']} | {f['gap'] or ''} |")
-        lines.append("")
+        lines += [f"## {title} — reference: {ref}", "", _counts(kind), ""]
+        # docstring "Category | Feature" groups the matrix; rows without a category go under "General"
+        order = {"verified": 0, "fixed": 1, "regression": 2, "gap": 3, "unsupported": 4, "not run": 5}
+        groups = {}
+        for nid, f in rows:
+            cat, _, feat = f["feature"].partition(" | ")
+            if not feat:
+                cat, feat = "General", cat
+            groups.setdefault(cat, []).append((nid, feat, f))
+        for cat in sorted(groups, key=lambda c: (CATEGORY_ORDER.index(c) if c in CATEGORY_ORDER else 99, c)):
+            lines += [f"### {cat}", "", "| Status | Feature | Notes |", "|---|---|---|"]
+            for nid, feat, f in sorted(groups[cat], key=lambda x: (order[outcomes.get(x[0], "not run")], x[1])):
+                lines.append(f"| {STATUS[outcomes.get(nid, 'not run')]} | {feat} | {f['gap'] or ''} |")
+            lines.append("")
     return "\n".join(lines)
+
+
+CATEGORY_ORDER = ["DDL", "DML", "Queries", "Functions", "Constraints & errors", "Metadata", "Types", "Unsupported", "General"]
 
 
 def _ran():

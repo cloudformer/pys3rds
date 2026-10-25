@@ -14,6 +14,7 @@
 | Maintenance window | none | yes, with restarts | yes | yes |
 | SLA | Lambda 99.95% · S3 99.9% | none for single-AZ | 99.95% | 99.99% |
 | Durability | S3, 11 nines | EBS | EBS, replicated | 6 copies |
+| SQL compatibility | SQLite dialect, or MySQL dialect via `s3rds.pymysql` — see the generated [compatibility report](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
 
 > Design principle: this is a relational database, so correctness comes first — atomicity and
 > consistency are not negotiable. A write may fail, but it never duplicates and never corrupts.
@@ -121,6 +122,23 @@ curl -s -u "admin:password" -H "content-type: application/json" \
      -d '{"sql":"SELECT * FROM posts WHERE id = ?","params":[1]}' \
      "https://xxxx.lambda-url.us-east-2.on.aws/api/db/blog/query"
 ```
+
+## Compatibility
+
+The compatibility matrix is generated, not hand-written: **[tests/compat/REPORT.md](tests/compat/REPORT.md)**.
+Every row is one feature (DDL, DML, queries, functions, constraints, metadata, types) run with the same SQL on the
+reference database — MySQL 8.0 in Docker for `s3rds.pymysql`, the standard-library `sqlite3` for `s3rds.sqlite` —
+and on s3rds, comparing results, Python types, rowcount, lastrowid and error codes.
+
+| Status | Meaning |
+|---|---|
+| ✅ verified | identical to the reference; safe to rely on |
+| ❌ gap | known difference; the note names the task that closes it |
+| ⛔ unsupported by design | refused with `NotSupportedError` (row locks, triggers, procedures) — never silently different |
+| 🔴 regression | was verified, now differs — blocks a release |
+
+Regenerate: `docker compose -f tests/compat/docker-compose.yml up -d mysql`, then
+`MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat python3 -m pytest tests -q`.
 
 ## Guarantees
 

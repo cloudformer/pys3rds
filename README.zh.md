@@ -14,6 +14,7 @@
 | 维护窗口 | 无 | 有，会重启 | 有 | 有 |
 | SLA | Lambda 99.95% · S3 99.9% | 单 AZ 无 SLA | 99.95% | 99.99% |
 | 持久性 | S3，11 个 9 | EBS | EBS 复制 | 6 副本 |
+| SQL 兼容性 | SQLite 方言，或经 `s3rds.pymysql` 的 MySQL 方言——见自动生成的[兼容性报告](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
 
 > 设计原则：这是一个关系型数据库，数据正确性第一——原子性、一致性不妥协，
 > 写入可以失败，但绝不重复、绝不写错。优势是省钱（闲时 ≈ $0），代价是性能一般。
@@ -117,6 +118,23 @@ curl -s -u "admin:密码" -H "content-type: application/json" \
      -d '{"sql":"SELECT * FROM posts WHERE id = ?","params":[1]}' \
      "https://xxxx.lambda-url.us-east-2.on.aws/api/db/blog/query"
 ```
+
+## 兼容性
+
+兼容性矩阵是自动生成的，不是手写的：**[tests/compat/REPORT.md](tests/compat/REPORT.md)**。
+每一行是一项能力（DDL、DML、查询、函数、约束、元数据、类型），用同一条 SQL 在参照库——`s3rds.pymysql` 对
+Docker 里的 MySQL 8.0，`s3rds.sqlite` 对标准库 `sqlite3`——和 s3rds 上各跑一遍，比对结果、Python 类型、
+rowcount、lastrowid 和错误码。
+
+| 状态 | 含义 |
+|---|---|
+| ✅ verified | 与参照库一致，可放心依赖 |
+| ❌ gap | 已知差异，备注写明哪个任务修 |
+| ⛔ unsupported by design | 明确拒绝（`NotSupportedError`：行锁、触发器、存储过程），绝不静默走样 |
+| 🔴 regression | 以前一致现在不一致，阻止发版 |
+
+重新生成：`docker compose -f tests/compat/docker-compose.yml up -d mysql`，然后
+`MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat python3 -m pytest tests -q`。
 
 ## 保证
 

@@ -120,6 +120,13 @@ def mysql_pair(real_mysql, s3_mysql):
             sql, params = step[0], step[1]
             compare(step, run_step(real, real_cur, sql, params), run_step(ours, ours_cur, sql, params))
     run.both = lambda sql, params=(): (run_step(real, real_cur, sql, params), run_step(ours, ours_cur, sql, params))
+
+    def unsupported(sql, params=()):
+        """MySQL runs it; s3rds must refuse it with NotSupportedError (never silently do something else)."""
+        r, o = run.both(sql, params)
+        assert r.error is None, f"reference MySQL rejected the statement itself: {r.error}"
+        assert o.error and o.error[0] == "NotSupportedError", f"{sql}\n  s3rds did not refuse: {o.error or o.rows}"
+    run.unsupported = unsupported
     return run
 
 

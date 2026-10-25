@@ -9,7 +9,7 @@ T = "DROP TABLE IF EXISTS t"
 
 
 def test_crud_and_rowcount(sqlite_pair):
-    """CREATE TABLE / INSERT / UPDATE / DELETE / SELECT, rowcount and lastrowid"""
+    """DML | CREATE TABLE / INSERT / UPDATE / DELETE / SELECT, rowcount and lastrowid"""
     sqlite_pair([
         (T, []),
         ("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, n INTEGER) STRICT", []),
@@ -23,7 +23,7 @@ def test_crud_and_rowcount(sqlite_pair):
 
 
 def test_parameter_types(sqlite_pair):
-    """Parameter binding: int, float, str, None, bool"""
+    """Types | Parameter binding: int, float, str, None, bool"""
     sqlite_pair([
         (T, []),
         ("CREATE TABLE t (v ANY) STRICT", []),
@@ -37,7 +37,7 @@ def test_parameter_types(sqlite_pair):
 
 
 def test_datetime_and_decimal_params_as_text(sqlite_pair):
-    """datetime / Decimal parameters stored as canonical text"""
+    """Types | datetime / Decimal parameters stored as canonical text"""
     # sqlite3 cannot bind these at all; s3rds encodes them to the canonical text. Compare against the
     # text the reference stores when given the same canonical strings.
     sqlite_pair([
@@ -52,7 +52,7 @@ def test_datetime_and_decimal_params_as_text(sqlite_pair):
 
 
 def test_errors_surface_on_both_sides(sqlite_pair):
-    """Errors are raised, never swallowed: UNIQUE, NOT NULL, no such table, syntax"""
+    """Constraints & errors | Errors are raised, never swallowed: UNIQUE, NOT NULL, no such table, syntax"""
     sqlite_pair([
         (T, []),
         ("CREATE TABLE t (id INTEGER PRIMARY KEY, email TEXT UNIQUE NOT NULL) STRICT", []),
@@ -65,15 +65,51 @@ def test_errors_surface_on_both_sides(sqlite_pair):
 
 
 def test_large_result_is_complete(sqlite_pair):
-    """1200-row result comes back complete (paging is transparent)"""
+    """Queries | 1200-row result comes back complete (paging is transparent)"""
     script = [(T, []), ("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT) STRICT", [])]
     script += [("INSERT INTO t (v) VALUES (?)", [f"row-{i:05d}"]) for i in range(1200)]
     script.append(("SELECT id, v FROM t ORDER BY id", []))
     sqlite_pair(script)
 
 
+def test_indexes_alter_joins(sqlite_pair):
+    """DDL | CREATE INDEX / UNIQUE INDEX / DROP INDEX, ALTER TABLE ADD / DROP COLUMN, JOIN"""
+    sqlite_pair([
+        (T, []), ("DROP TABLE IF EXISTS o", []),
+        ("CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, score INTEGER) STRICT", []),
+        ("CREATE TABLE o (id INTEGER PRIMARY KEY AUTOINCREMENT, t_id INTEGER, item TEXT) STRICT", []),
+        ("CREATE INDEX idx_name ON t (name)", []),
+        ("CREATE UNIQUE INDEX uq_score ON t (score)", []),
+        ("INSERT INTO t (name, score) VALUES ('a', 1), ('b', 2)", []),
+        ("INSERT INTO t (name, score) VALUES ('c', 1)", []),              # UNIQUE
+        ("DROP INDEX uq_score", []),
+        ("ALTER TABLE t ADD COLUMN age INTEGER DEFAULT 7", []),
+        ("INSERT INTO o (t_id, item) VALUES (1, 'x'), (1, 'y')", []),
+        ("SELECT t.name, t.age, o.item FROM t JOIN o ON o.t_id = t.id ORDER BY o.id", []),
+        ("SELECT t.name, o.item FROM t LEFT JOIN o ON o.t_id = t.id ORDER BY t.id, o.id", []),
+        ("ALTER TABLE t DROP COLUMN age", []),
+        ("SELECT name FROM t ORDER BY id", []),
+    ])
+
+
+def test_subqueries_union_case(sqlite_pair):
+    """Queries | Subqueries (IN / EXISTS / scalar), UNION, CASE WHEN, COALESCE, json_extract, STRICT type rejection"""
+    sqlite_pair([
+        (T, []),
+        ("CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT, score INTEGER, doc TEXT) STRICT", []),
+        ("INSERT INTO t (name, score, doc) VALUES ('a', 1, '{\"k\": 1}'), ('b', 2, NULL), ('c', 3, NULL)", []),
+        ("SELECT name FROM t WHERE score IN (SELECT score FROM t WHERE score > 1) ORDER BY id", []),
+        ("SELECT name FROM t x WHERE EXISTS (SELECT 1 FROM t y WHERE y.score = x.score + 1) ORDER BY id", []),
+        ("SELECT (SELECT COUNT(*) FROM t) AS total", []),
+        ("SELECT name FROM t WHERE score = 1 UNION SELECT name FROM t WHERE score = 3 ORDER BY name", []),
+        ("SELECT name, CASE WHEN score >= 2 THEN 'high' ELSE 'low' END AS tier, COALESCE(doc, '-') AS d FROM t ORDER BY id", []),
+        ("SELECT json_extract(doc, '$.k') AS k FROM t WHERE id = 1", []),
+        ("INSERT INTO t (id, name, score) VALUES (9, 'z', 'not-an-int')", []),   # STRICT rejects
+    ])
+
+
 def test_aggregates_and_window(sqlite_pair):
-    """GROUP BY aggregates and window functions"""
+    """Queries | GROUP BY aggregates and window functions"""
     sqlite_pair([
         (T, []),
         ("CREATE TABLE t (g TEXT, v REAL) STRICT", []),

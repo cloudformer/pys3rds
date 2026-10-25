@@ -19,7 +19,7 @@ USERS = ("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(50) NO
 # ---- verified ----
 
 def test_crud(mysql_pair):
-    """CREATE TABLE / INSERT / UPDATE / DELETE / SELECT with %s and %(name)s placeholders"""
+    """DML | CREATE TABLE / INSERT / UPDATE / DELETE / SELECT with %s and %(name)s placeholders"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name, email) VALUES (%s, %s)", ["alice", "a@x"]),
@@ -32,7 +32,7 @@ def test_crud(mysql_pair):
 
 
 def test_case_insensitive_compare(mysql_pair):
-    """Case-insensitive string comparison (MySQL default collation)"""
+    """Queries | Case-insensitive string comparison (MySQL default collation)"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name) VALUES ('alice')", []),
@@ -41,7 +41,7 @@ def test_case_insensitive_compare(mysql_pair):
 
 
 def test_limit_offset(mysql_pair):
-    """LIMIT offset, count and LIMIT ... OFFSET; multi-row INSERT lastrowid (first id)"""
+    """Queries | LIMIT offset, count and LIMIT ... OFFSET; multi-row INSERT lastrowid (first id)"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name) VALUES ('a'), ('b'), ('c')", []),
@@ -51,7 +51,7 @@ def test_limit_offset(mysql_pair):
 
 
 def test_upsert(mysql_pair):
-    """INSERT IGNORE and INSERT ... ON DUPLICATE KEY UPDATE col = VALUES(col)"""
+    """DML | INSERT IGNORE and INSERT ... ON DUPLICATE KEY UPDATE col = VALUES(col)"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (id, name, email) VALUES (1, 'a', 'a@x')", []),
@@ -64,7 +64,7 @@ def test_upsert(mysql_pair):
 
 
 def test_error_codes(mysql_pair):
-    """Error classes and MySQL codes: 1062 duplicate, 1146 no table, 1054 no column, 1064 syntax, 1048 NULL"""
+    """Constraints & errors | Error classes and MySQL codes: 1062 duplicate, 1146 no table, 1054 no column, 1064 syntax, 1048 NULL"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name, email) VALUES ('a', 'dup')", []),
@@ -77,7 +77,7 @@ def test_error_codes(mysql_pair):
 
 
 def test_string_functions(mysql_pair):
-    """String functions: IFNULL, CONCAT, CONCAT_WS, UPPER, LENGTH, SUBSTRING"""
+    """Functions | String functions: IFNULL, CONCAT, CONCAT_WS, UPPER, LENGTH, SUBSTRING"""
     mysql_pair([
         ("SELECT IFNULL(NULL, 'd') AS v, CONCAT_WS('-', 'a', 'b') AS w, CONCAT('x', 'y') AS c, "
          "UPPER('ab') AS u, LENGTH('abc') AS l, SUBSTRING('hello', 2, 3) AS s", []),
@@ -85,7 +85,7 @@ def test_string_functions(mysql_pair):
 
 
 def test_last_insert_id(mysql_pair):
-    """LAST_INSERT_ID() after an INSERT"""
+    """Functions | LAST_INSERT_ID() after an INSERT"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name) VALUES ('a')", []),
@@ -94,7 +94,7 @@ def test_last_insert_id(mysql_pair):
 
 
 def test_show_tables(mysql_pair):
-    """SHOW TABLES"""
+    """Metadata | SHOW TABLES"""
     mysql_pair([(T, []), (USERS, [])])
     real, ours = mysql_pair.both("SHOW TABLES")
     key = "Tables_in_compat"
@@ -102,11 +102,185 @@ def test_show_tables(mysql_pair):
     assert "t" in {r[key] for r in real.rows} and "t" in {r[key] for r in ours.rows}  # other tables may exist on the real side
 
 
+def test_create_table_types(mysql_pair):
+    """DDL | CREATE TABLE with INT, BIGINT, VARCHAR, TEXT, BOOLEAN, DEFAULT and NOT NULL; DROP TABLE"""
+    mysql_pair([
+        (T, []),
+        ("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, n BIGINT NOT NULL DEFAULT 0, "
+         "s VARCHAR(20) DEFAULT 'x', body TEXT, flag BOOLEAN DEFAULT TRUE)", []),
+        ("INSERT INTO t (body) VALUES ('hello')", []),
+        ("SELECT id, n, s, body, flag FROM t", []),
+        ("DROP TABLE t", []),
+    ])
+
+
+def test_create_and_drop_index(mysql_pair):
+    """DDL | CREATE INDEX / CREATE UNIQUE INDEX / DROP INDEX ... ON t; unique index enforced (1062)"""
+    mysql_pair([
+        (T, []), (USERS, []),
+        ("CREATE INDEX idx_name ON t (name)", []),
+        ("CREATE UNIQUE INDEX uq_score ON t (score)", []),
+        ("INSERT INTO t (name, score) VALUES ('a', 1)", []),
+        ("INSERT INTO t (name, score) VALUES ('b', 1)", []),     # 1062 via the unique index
+        ("DROP INDEX uq_score ON t", []),
+        ("INSERT INTO t (name, score) VALUES ('b', 1)", []),     # allowed now
+        ("SELECT COUNT(*) AS c FROM t", []),
+    ])
+
+
+def test_alter_table_add_drop_column(mysql_pair):
+    """DDL | ALTER TABLE ADD COLUMN / DROP COLUMN"""
+    mysql_pair([
+        (T, []), (USERS, []),
+        ("INSERT INTO t (name) VALUES ('a')", []),
+        ("ALTER TABLE t ADD COLUMN age INT DEFAULT 7", []),
+        ("SELECT name, age FROM t", []),
+        ("ALTER TABLE t DROP COLUMN age", []),
+        ("SELECT name FROM t", []),
+    ])
+
+
+def test_where_operators(mysql_pair):
+    """Queries | WHERE with LIKE, IN, BETWEEN, IS NULL, <>, AND / OR"""
+    mysql_pair([
+        (T, []), (USERS, []),
+        ("INSERT INTO t (name, email, score) VALUES ('alice', 'a@x', 10), ('bob', NULL, 20), ('carol', 'c@x', 30)", []),
+        ("SELECT name FROM t WHERE name LIKE 'a%' ORDER BY id", []),
+        ("SELECT name FROM t WHERE name IN ('bob', 'carol') ORDER BY id", []),
+        ("SELECT name FROM t WHERE score BETWEEN 15 AND 25", []),
+        ("SELECT name FROM t WHERE email IS NULL", []),
+        ("SELECT name FROM t WHERE score <> 20 AND (name = 'alice' OR score > 25) ORDER BY id", []),
+    ])
+
+
+def test_order_distinct_group_having(mysql_pair):
+    """Queries | ORDER BY, DISTINCT, GROUP BY with COUNT, HAVING"""
+    mysql_pair([
+        (T, []), (USERS, []),
+        ("INSERT INTO t (name, score) VALUES ('a', 1), ('a', 2), ('b', 3), ('c', 3)", []),
+        ("SELECT DISTINCT score FROM t ORDER BY score DESC", []),
+        ("SELECT name, COUNT(*) AS c FROM t GROUP BY name HAVING COUNT(*) > 1 ORDER BY name", []),
+        ("SELECT name FROM t ORDER BY score DESC, name ASC", []),
+    ])
+
+
+def test_joins(mysql_pair):
+    """Queries | INNER JOIN and LEFT JOIN"""
+    mysql_pair([
+        (T, []), ("DROP TABLE IF EXISTS o", []), (USERS, []),
+        ("CREATE TABLE o (id INT AUTO_INCREMENT PRIMARY KEY, user_id INT, item VARCHAR(20))", []),
+        ("INSERT INTO t (name) VALUES ('a'), ('b')", []),
+        ("INSERT INTO o (user_id, item) VALUES (1, 'x'), (1, 'y')", []),
+        ("SELECT t.name, o.item FROM t INNER JOIN o ON o.user_id = t.id ORDER BY o.id", []),
+        ("SELECT t.name, o.item FROM t LEFT JOIN o ON o.user_id = t.id ORDER BY t.id, o.id", []),
+        ("DROP TABLE o", []),
+    ])
+
+
+def test_subqueries_and_union(mysql_pair):
+    """Queries | Subquery in WHERE (IN / EXISTS), scalar subquery, UNION / UNION ALL"""
+    mysql_pair([
+        (T, []), (USERS, []),
+        ("INSERT INTO t (name, score) VALUES ('a', 1), ('b', 2), ('c', 3)", []),
+        ("SELECT name FROM t WHERE score IN (SELECT score FROM t WHERE score > 1) ORDER BY id", []),
+        ("SELECT name FROM t x WHERE EXISTS (SELECT 1 FROM t y WHERE y.score = x.score + 1) ORDER BY id", []),
+        ("SELECT (SELECT COUNT(*) FROM t) AS total", []),
+        ("SELECT name FROM t WHERE score = 1 UNION SELECT name FROM t WHERE score = 3 ORDER BY name", []),
+        ("SELECT 1 AS v UNION ALL SELECT 1 AS v", []),
+    ])
+
+
+def test_case_and_null_functions(mysql_pair):
+    """Functions | CASE WHEN, COALESCE, NULLIF"""
+    mysql_pair([
+        (T, []), (USERS, []),
+        ("INSERT INTO t (name, email, score) VALUES ('a', NULL, 5), ('b', 'b@x', 50)", []),
+        ("SELECT name, CASE WHEN score >= 10 THEN 'high' ELSE 'low' END AS tier FROM t ORDER BY id", []),
+        ("SELECT COALESCE(email, 'none') AS e, NULLIF(score, 5) AS s FROM t ORDER BY id", []),
+    ])
+
+
+def test_math_and_more_string_functions(mysql_pair):
+    """Functions | ABS, MOD, LOWER, TRIM, REPLACE, LEFT, RIGHT, INSTR"""
+    mysql_pair([
+        ("SELECT ABS(-3) AS a, MOD(7, 3) AS m, LOWER('AB') AS l, TRIM('  x  ') AS t, "
+         "REPLACE('hello', 'l', 'L') AS r, LEFT('hello', 2) AS le, RIGHT('hello', 2) AS ri, INSTR('hello', 'l') AS i", []),
+    ])
+
+
+def test_foreign_key(mysql_pair):
+    """Constraints & errors | FOREIGN KEY enforced on insert (1452)"""
+    mysql_pair([
+        ("DROP TABLE IF EXISTS c", []), (T, []), (USERS, []),
+        ("CREATE TABLE c (id INT AUTO_INCREMENT PRIMARY KEY, t_id INT, FOREIGN KEY (t_id) REFERENCES t(id))", []),
+        ("INSERT INTO t (name) VALUES ('a')", []),
+        ("INSERT INTO c (t_id) VALUES (1)", []),
+        ("INSERT INTO c (t_id) VALUES (999)", []),     # 1452
+        ("DROP TABLE c", []),
+    ])
+
+
+def test_replace_into(mysql_pair):
+    """DML | REPLACE INTO"""
+    mysql_pair([
+        (T, []), (USERS, []),
+        ("INSERT INTO t (id, name) VALUES (1, 'a')", []),
+        ("REPLACE INTO t (id, name) VALUES (1, 'b')", [], {"ignore": "rowcount,lastrowid"}),  # MySQL counts delete+insert
+        ("SELECT id, name FROM t", []),
+    ])
+
+
+def test_auto_increment_does_not_reuse_ids(mysql_pair):
+    """DDL | AUTO_INCREMENT never reuses a deleted id"""
+    mysql_pair([
+        (T, []), (USERS, []),
+        ("INSERT INTO t (name) VALUES ('a'), ('b')", []),
+        ("DELETE FROM t WHERE id = 2", []),
+        ("INSERT INTO t (name) VALUES ('c')", []),
+        ("SELECT id, name FROM t ORDER BY id", []),
+    ])
+
+
+def test_truncate(mysql_pair):
+    """DML | TRUNCATE TABLE"""
+    mysql_pair([
+        (T, []), (USERS, []),
+        ("INSERT INTO t (name) VALUES ('a'), ('b')", []),
+        ("TRUNCATE TABLE t", [], {"ignore": "rowcount"}),
+        ("SELECT COUNT(*) AS c FROM t", []),
+    ])
+
+
+# ---- unsupported by design: MySQL runs these, s3rds refuses them with NotSupportedError ----
+
+@pytest.mark.unsupported("row locks need a real server; s3rds has one writer and no sessions")
+def test_select_for_update_refused(mysql_pair):
+    """Unsupported | SELECT ... FOR UPDATE"""
+    mysql_pair([(T, []), (USERS, [])])
+    mysql_pair.unsupported("SELECT * FROM t WHERE id = 1 FOR UPDATE")
+
+
+@pytest.mark.unsupported("stored procedures / triggers run inside the server; use application code")
+def test_trigger_refused(mysql_pair):
+    """Unsupported | CREATE TRIGGER"""
+    mysql_pair([(T, []), (USERS, [])])
+    mysql_pair.unsupported("CREATE TRIGGER tr BEFORE INSERT ON t FOR EACH ROW SET NEW.score = 1")
+
+
+@pytest.mark.unsupported("table locks need a real server")
+def test_lock_tables_refused(mysql_pair):
+    """Unsupported | LOCK TABLES"""
+    mysql_pair([(T, []), (USERS, [])])
+    mysql_pair.unsupported("LOCK TABLES t WRITE")
+    real, _ = mysql_pair.both("UNLOCK TABLES")  # release the reference side's lock
+    assert real.error is None
+
+
 # ---- known gaps: each marker names the task in the MySQL spec that closes it ----
 
 @pytest.mark.xfail(strict=True, reason="task 8: DATETIME/DECIMAL come back as str/int, pymysql returns datetime/Decimal")
 def test_result_types(mysql_pair):
-    """Column types on results: DATETIME → datetime, DECIMAL → Decimal, TINYINT(1) → int"""
+    """Types | Column types on results: DATETIME → datetime, DECIMAL → Decimal, TINYINT(1) → int"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (d DATETIME, x DECIMAL(10,2), b TINYINT(1))", []),
@@ -117,7 +291,7 @@ def test_result_types(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 8: SUM() is Decimal in MySQL, int here")
 def test_aggregate_types(mysql_pair):
-    """Aggregate result types: COUNT(*) int, SUM(INT) Decimal"""
+    """Types | Aggregate result types: COUNT(*) int, SUM(INT) Decimal"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name, score) VALUES ('a', 1), ('b', 2)", []),
@@ -127,7 +301,7 @@ def test_aggregate_types(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 6: DATE_ADD drops the time part (DATE() instead of datetime())")
 def test_date_add_keeps_time(mysql_pair):
-    """DATE_ADD / DATE_SUB with INTERVAL keep the time part"""
+    """Functions | DATE_ADD / DATE_SUB with INTERVAL keep the time part"""
     mysql_pair([
         ("SELECT DATE_ADD('2026-01-01 10:30:00', INTERVAL 1 DAY) AS d", []),
     ])
@@ -135,7 +309,7 @@ def test_date_add_keeps_time(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 7: inline KEY idx (col) is dropped instead of becoming CREATE INDEX")
 def test_inline_index_exists(mysql_pair):
-    """Inline KEY / INDEX in CREATE TABLE creates the index"""
+    """DDL | Inline KEY / INDEX in CREATE TABLE creates the index"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(100), KEY idx_title (title))", []),
@@ -145,13 +319,13 @@ def test_inline_index_exists(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 9: NOW() returns datetime in pymysql, str here")
 def test_now_type(mysql_pair):
-    """NOW() / CURDATE() return datetime / date objects"""
+    """Types | NOW() / CURDATE() return datetime / date objects"""
     mysql_pair([("SELECT NOW() IS NOT NULL AS ok, DATE(NOW()) = CURDATE() AS same, NOW() AS n", [])])
 
 
 @pytest.mark.xfail(strict=True, reason="task 5: invalid ENUM value is 1265 in MySQL strict mode, 3819 (CHECK) here")
 def test_enum_error_code(mysql_pair):
-    """ENUM rejects values outside the list with MySQL's error code"""
+    """Constraints & errors | ENUM rejects values outside the list with MySQL's error code"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (s ENUM('a','b'))", []),
@@ -161,13 +335,13 @@ def test_enum_error_code(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 5: omitted NOT NULL column is 1364 in MySQL strict mode, 1048 here (SQLite cannot tell the two apart)")
 def test_missing_column_error_code(mysql_pair):
-    """Omitting a NOT NULL column without default raises 1364"""
+    """Constraints & errors | Omitting a NOT NULL column without default raises 1364"""
     mysql_pair([(T, []), (USERS, []), ("INSERT INTO t (email) VALUES ('c')", [])])
 
 
 @pytest.mark.xfail(strict=True, reason="task 5: for an upsert that updated an existing row MySQL reports rowcount 2 / lastrowid 0")
 def test_upsert_rowcount_quirk(mysql_pair):
-    """ON DUPLICATE KEY UPDATE reports rowcount 2 and lastrowid 0 when it updates"""
+    """DML | ON DUPLICATE KEY UPDATE reports rowcount 2 and lastrowid 0 when it updates"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (id, name) VALUES (1, 'a')", []),
@@ -177,7 +351,7 @@ def test_upsert_rowcount_quirk(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 12: DESCRIBE shows SQLite type names (text(50)) not MySQL's (varchar(50))")
 def test_describe(mysql_pair):
-    """DESCRIBE shows MySQL type names"""
+    """Metadata | DESCRIBE shows MySQL type names"""
     mysql_pair([
         (T, []), (USERS, []),
         ("DESCRIBE t", []),
