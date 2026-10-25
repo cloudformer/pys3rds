@@ -38,7 +38,7 @@ import socket
 import urllib.parse
 import warnings
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 apilevel = "2.0"
 threadsafety = 1

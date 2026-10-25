@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.2 — 2026-10-25
+
+MySQL dialect: 59% → 86% of the 99-feature compatibility matrix (`tests/compat/REPORT.md`).
+`s3rds.sqlite`: BLOBs. Server redeploy required for typed results and BLOBs; the new server still serves
+0.1.1 clients.
+
+- **Result types match pymysql** (`s3rds.pymysql`): `DATETIME` → `datetime`, `DATE` → `date`, `TIME` → `timedelta`,
+  `DECIMAL` → `Decimal`, `SUM` / `AVG` / integer division → `Decimal`, `NOW()` / `CURDATE()` / `CURTIME()` typed.
+  The server marks values by the column's declared type when the driver asks (`types: true`).
+- **BLOB** (both drivers): `bytes` parameters and results travel as `{"$b": base64}`.
+- **Strict mode**: `'abc'` into an `INT` / `DECIMAL` column raises 1366 (`DataError`), via a named CHECK.
+- **DDL**: inline `KEY` / `INDEX` / `UNIQUE KEY (a, b)` become `CREATE INDEX` (stored as `table__name`),
+  `UNSIGNED` / `CHARACTER SET` / `COMMENT` accepted, `ALTER TABLE CHANGE` renames (type-only `MODIFY` is a no-op),
+  `RENAME TABLE`, the `DEFAULT` keyword and `INSERT INTO t () VALUES ()`, table-level `CHECK` kept.
+- **DML**: `UPDATE … JOIN`, `DELETE t FROM t JOIN …`, `REPLACE INTO` lastrowid, `lastrowid` is 0 for tables
+  without `AUTO_INCREMENT` (as MySQL).
+- **Functions**: `DATE_ADD` / `DATE_SUB` keep the time, `YEAR` … `SECOND`, `DAYOFWEEK`, `DATEDIFF`, `TIMESTAMPDIFF`,
+  `TRUNCATE(x, d)`, `LPAD` / `RPAD`, `REPEAT`, `SUBSTRING_INDEX` (±1), `->` / `->>` / `JSON_UNQUOTE`, `UUID()`, `RAND()`,
+  `DATABASE()` inside expressions.
+- **Metadata**: `DESCRIBE` / `SHOW COLUMNS` show the declared MySQL types, `UNI` / `MUL` keys;
+  `SHOW CREATE TABLE` in MySQL layout; `SHOW INDEX` includes `PRIMARY`; `information_schema.tables` / `columns`;
+  `USE db`, `SET NAMES` / `SESSION` / `sql_mode` / `time_zone` accepted; `DROP TABLE` of an unknown table → 1051;
+  `CHECK` violations are `OperationalError` 3819 as in pymysql.
+- **Refused explicitly** (NotSupportedError): `DROP PROCEDURE`, `SET @x`, `PARTITION BY`.
+- Known limits of the Lambda runtime's SQLite 3.40 (see `tests/compat/TASKS.md`, task 22): `GROUP_CONCAT(… ORDER BY …)`,
+  `UPDATE` / `DELETE … ORDER BY LIMIT`.
+
 ## 0.1.1 — 2026-10-25
 
 `s3rds.sqlite` fixes (inherited by `s3rds.pymysql`). No breaking changes.
