@@ -72,7 +72,7 @@ _SQLITE_TO_MYSQL = [
     (r"FOREIGN KEY constraint failed", IntegrityError,   1452, "Cannot add or update a child row: a foreign key constraint fails"),
     (r"CHECK constraint failed",       IntegrityError,   3819, "Check constraint is violated"),
     (r"no such table",                 ProgrammingError, 1146, "Table doesn't exist"),
-    (r"no such column",                ProgrammingError, 1054, "Unknown column"),
+    (r"no such column",                OperationalError, 1054, "Unknown column"),  # pymysql: OperationalError
     (r"already exists",                OperationalError, 1050, "Table already exists"),
     (r"no such function",              ProgrammingError, 1305, "FUNCTION does not exist"),
     (r"syntax error|incomplete input", ProgrammingError, 1064, "You have an error in your SQL syntax"),
@@ -297,8 +297,16 @@ class Connection(_sqlite.Connection):
         return translated.replace(_LAST_ID_TOKEN, str(self._last_insert_id))
 
     def _remember(self, result):
+        # multi-row INSERT: MySQL's lastrowid is the FIRST generated id, SQLite's the last
+        if result.get("lastrowid") and result.get("rowcount", 0) > 1 and not result.get("columns"):
+            result["lastrowid"] = result["lastrowid"] - result["rowcount"] + 1
         if result.get("lastrowid"):
             self._last_insert_id = result["lastrowid"]
+        # pymysql's rowcount: number of rows for SELECT, 0 (not SQLite's -1) for DDL
+        if result.get("columns"):
+            result["rowcount"] = len(result.get("rows") or [])
+        elif result.get("rowcount", -1) < 0:
+            result["rowcount"] = 0
         return result
 
     def execute(self, sql, params=()):

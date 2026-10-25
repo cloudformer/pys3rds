@@ -24,6 +24,10 @@ os.environ.setdefault("DB_PASSWORD", "pw")
 
 from botocore.exceptions import ClientError  # noqa: E402
 
+# compatibility report (tests/compat/REPORT.md): hooks must live in the root conftest to see every test
+from compat_report import (pytest_collection_modifyitems, pytest_runtest_logreport,  # noqa: E402,F401
+                           pytest_sessionfinish, pytest_terminal_summary)
+
 
 class FakeS3:
     def __init__(self):

@@ -159,7 +159,14 @@ pytest tests/ -v
 不支持的——抛 `NotSupportedError`，绝不静默出错：存储过程/函数、触发器、`FULLTEXT`、
 `SELECT … FOR UPDATE`、`LOCK TABLES`、`GRANT`/用户管理。结果值按存储原样返回（暂无 `DATETIME` → `datetime` 转换）。
 
-`tests/test_pys3mysql.py` 在真实服务端代码上跑完整方言测试；设置 `MYSQL_DSN` 还能逐条和真 MySQL 对照。
+**兼容性报告 —— [tests/compat/REPORT.md](tests/compat/REPORT.md)。** 上面每一项能力对应一个测试：同一条 SQL
+在 Docker 里的真 MySQL 8.0 和 s3rds 上各跑一遍，比对结果、Python 类型、rowcount、lastrowid 和错误码。
+verified 的可以放心用；gap 的标了哪个任务来修。每次运行自动重新生成：
+
+```bash
+docker compose -f tests/compat/docker-compose.yml up -d mysql
+MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat python3 -m pytest tests/compat -q
+```
 
 ## 适用规模
 

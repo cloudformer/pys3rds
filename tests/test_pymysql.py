@@ -6,7 +6,6 @@ runs the same statements on a real MySQL when MYSQL_DSN is set, e.g.
 """
 import base64
 import json
-import os
 
 import pytest
 
@@ -15,7 +14,7 @@ sqlglot = pytest.importorskip("sqlglot")
 import lambda_function as lf  # noqa: E402
 import s3rds  # noqa: E402
 from s3rds import pymysql as s3mysql  # noqa: E402
-from s3rds.pymysql import (IntegrityError, NotSupportedError,  # noqa: E402
+from s3rds.pymysql import (IntegrityError, NotSupportedError, OperationalError,  # noqa: E402
                            ProgrammingError, _bind, _translate)
 
 AUTH = "Basic " + base64.b64encode(b"admin:pw").decode()
@@ -131,7 +130,7 @@ def test_mysql_error_codes(conn):
     with pytest.raises(ProgrammingError) as e:
         conn.execute("SELECT * FROM nope")
     assert e.value.code == 1146
-    with pytest.raises(ProgrammingError) as e:
+    with pytest.raises(OperationalError) as e:  # pymysql's class for 1054 (verified against MySQL 8.0)
         conn.execute("SELECT nope FROM users")
     assert e.value.code == 1054
     with pytest.raises(IntegrityError) as e:
@@ -188,48 +187,3 @@ def test_psycopg2_placeholder_raises():
     with pytest.raises(s3rds.psycopg2.NotSupportedError):
         s3rds.psycopg2.connect(host="x", user="u", password="p", dbname="d")
 
-
-# ---- optional: same statements on a real MySQL (pymysql) vs s3rds.pymysql ----
-
-CASES = [
-    "INSERT INTO cmp (name, score) VALUES ('alice', 10)",
-    "INSERT INTO cmp (name, score) VALUES ('Bob', 20)",
-    "INSERT IGNORE INTO cmp (id, name, score) VALUES (1, 'dup', 0)",
-    "INSERT INTO cmp (id, name, score) VALUES (2, 'bob2', 25) ON DUPLICATE KEY UPDATE score = VALUES(score)",
-    "SELECT name, score FROM cmp WHERE name = 'ALICE'",
-    "SELECT name, score FROM cmp ORDER BY score DESC LIMIT 1, 1",
-    "SELECT COUNT(*) AS n, SUM(score) AS s FROM cmp",
-    "SELECT IFNULL(NULL, 'd') AS v, CONCAT_WS('-', 'a', 'b') AS w",
-]
-
-
-@pytest.mark.skipif(not os.environ.get("MYSQL_DSN"), reason="set MYSQL_DSN to compare against a real MySQL")
-def test_compare_with_real_mysql(conn):
-    real_pymysql = pytest.importorskip("pymysql")
-    from urllib.parse import urlparse
-    u = urlparse(os.environ["MYSQL_DSN"])
-    real = real_pymysql.connect(host=u.hostname, port=u.port or 3306, user=u.username, password=u.password,
-                                database=u.path.lstrip("/"), autocommit=True,
-                                cursorclass=real_pymysql.cursors.DictCursor)
-    ddl = "CREATE TABLE cmp (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(50), score INT)"
-    with real.cursor() as cur:
-        cur.execute("DROP TABLE IF EXISTS cmp")
-        cur.execute(ddl)
-    conn.execute(ddl)
-
-    def norm(v):
-        if not isinstance(v, list):
-            return v
-        return [{k: (float(x) if isinstance(x, (int, float)) or type(x).__name__ == "Decimal" else x)
-                 for k, x in row.items()} for row in v]
-
-    report = []
-    for sql in CASES:
-        with real.cursor() as cur:
-            cur.execute(sql)
-            expected = [dict(r) for r in cur.fetchall()] if cur.description else cur.rowcount
-        r = conn.execute(sql)
-        got = [dict(zip(r["columns"], row)) for row in r["rows"]] if r["columns"] else r["rowcount"]
-        report.append((sql, norm(expected) == norm(got), expected, got))
-    bad = [r for r in report if not r[1]]
-    assert not bad, "\n".join(f"{s}\n  mysql: {e}\n  s3rds.pymysql: {g}" for s, _, e, g in bad)
