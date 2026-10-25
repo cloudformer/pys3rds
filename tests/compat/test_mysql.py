@@ -10,9 +10,13 @@ so the marker gets removed. Run with:
 
 The report is written to tests/compat/REPORT.md.
 """
-import sqlite3
-
 import pytest
+
+# The production engine is the Lambda runtime's SQLite, not this machine's: features it lacks are gaps
+# even when the local sqlite3 is newer. Checked on the console with
+#   SELECT sqlite_version(), sqlite_compileoption_used('ENABLE_UPDATE_DELETE_LIMIT')
+LAMBDA_SQLITE = (3, 40, 0)
+LAMBDA_UPDATE_DELETE_LIMIT = False
 
 T = "DROP TABLE IF EXISTS t"
 USERS = ("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(50) NOT NULL, "
@@ -506,8 +510,10 @@ def test_delete_join(mysql_pair):
     ])
 
 
+@pytest.mark.xfail(not LAMBDA_UPDATE_DELETE_LIMIT, run=False, strict=True,
+                   reason="task 22: the Lambda runtime's SQLite is built without ENABLE_UPDATE_DELETE_LIMIT")
 def test_update_delete_order_limit(mysql_pair):
-    """DML | UPDATE / DELETE ... ORDER BY ... LIMIT | needs SQLite built with UPDATE/DELETE LIMIT"""
+    """DML | UPDATE / DELETE ... ORDER BY ... LIMIT | task 22"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name) VALUES ('a'), ('b'), ('c')", []),
@@ -559,10 +565,10 @@ def test_window_functions(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(sqlite3.sqlite_version_info < (3, 44), strict=True,
-                   reason="GROUP_CONCAT(... ORDER BY ...) needs SQLite 3.44+ (check the Lambda runtime's version)")
+@pytest.mark.xfail(LAMBDA_SQLITE < (3, 44), run=False, strict=True,
+                   reason="task 22: ORDER BY inside GROUP_CONCAT needs SQLite 3.44; the Lambda runtime has 3.40")
 def test_group_concat(mysql_pair):
-    """Queries | GROUP_CONCAT with ORDER BY and SEPARATOR | needs SQLite 3.44+"""
+    """Queries | GROUP_CONCAT with ORDER BY and SEPARATOR | task 22"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name, score) VALUES ('b', 1), ('a', 1), ('c', 2)", []),

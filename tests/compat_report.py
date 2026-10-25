@@ -61,7 +61,8 @@ def pytest_runtest_logreport(report):
     if report.nodeid not in features:
         return
     if report.when == "setup" and report.outcome == "skipped":
-        outcomes[report.nodeid] = "not run"
+        # xfail(run=False) is reported as skipped at setup: still a known gap, not "not run"
+        outcomes[report.nodeid] = "gap" if hasattr(report, "wasxfail") else "not run"
     elif report.when == "call":
         xfail = hasattr(report, "wasxfail")
         if report.outcome == "failed":   # keep the real-vs-s3rds lines so the report shows the actual difference
