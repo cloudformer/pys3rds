@@ -6,6 +6,7 @@ are collected and rendered at session end.
 """
 import datetime
 import os
+import re
 import platform
 import sqlite3
 
@@ -77,6 +78,18 @@ def pytest_runtest_logreport(report):
             "verified" if report.outcome == "passed" else "regression")
 
 
+def _open_tasks():
+    """'task 18 (3), task 22 (2)' from the notes of the rows still marked gap."""
+    import collections
+    c = collections.Counter()
+    for nid, f in features.items():
+        if outcomes.get(nid) == "gap":
+            m = re.search(r"task (\d+)", f["feature"] + " " + (f["gap"] or ""))
+            if m:
+                c[int(m.group(1))] += 1
+    return ", ".join(f"task {t} ({n})" for t, n in sorted(c.items())) or "none"
+
+
 def _counts(kind):
     c = {}
     for nid, f in features.items():
@@ -106,6 +119,7 @@ def render():
         f"Whole test run: **{suite['passed']} passed**, {suite['failed']} failed, "
         f"{suite['xfailed']} expected failures (known gaps), {suite['skipped']} skipped "
         "— regression suite (`tests/`) and compatibility suite (`tests/compat/`) together.", "",
+        f"Open tasks: {_open_tasks()} — see [TASKS.md](TASKS.md).", "",
     ]
     for kind, title, ref in [("mysql", "s3rds.pymysql vs MySQL", versions["mysql"] or "MySQL (not run)"),
                              ("sqlite", "s3rds.sqlite vs sqlite3", f"SQLite {sqlite3.sqlite_version} (standard library)")]:
@@ -148,4 +162,5 @@ def pytest_terminal_summary(terminalreporter):
     terminalreporter.section("s3rds compatibility")
     for kind in ("mysql", "sqlite"):
         terminalreporter.write_line(f"{kind:7s} {_counts(kind)}")
+    terminalreporter.write_line(f"open tasks: {_open_tasks()}  (tests/compat/TASKS.md)")
     terminalreporter.write_line(f"report: {os.path.relpath(REPORT)}")
