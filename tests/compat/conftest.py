@@ -39,7 +39,7 @@ class Outcome:
 def run_step(conn, dict_cursor, sql, params):
     try:
         with conn.cursor(dict_cursor) as cur:
-            cur.execute(sql, params)
+            cur.execute(sql, params or None)  # pymysql %-formats the SQL whenever args is not None
             rows = [dict(r) for r in cur.fetchall()] if cur.description else None
             return Outcome(rows, cur.rowcount, cur.lastrowid, None)
     except Exception as e:  # noqa: BLE001 - we compare whatever each side raises

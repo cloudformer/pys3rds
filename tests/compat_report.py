@@ -18,12 +18,14 @@ suite = {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0}  # every test in 
 
 STATUS = {"verified": "✅ verified", "gap": "❌ gap", "regression": "🔴 regression",
           "fixed": "🟡 fixed — remove xfail marker", "unsupported": "⛔ unsupported by design",
-          "not run": "⏭ not run"}
+          "quirk": "⚪ engine quirk (documented, not aligned)", "not run": "⏭ not run"}
 
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "unsupported(reason): the feature is rejected on purpose "
                             "(NotSupportedError); the test passes when s3rds refuses it cleanly")
+    config.addinivalue_line("markers", "quirk: together with xfail -- an engine-level difference that is "
+                            "documented and deliberately not aligned (not a gap to fix)")
 
 
 def pytest_collection_modifyitems(items):
@@ -42,6 +44,7 @@ def pytest_collection_modifyitems(items):
             "gap": xfail.kwargs.get("reason") if xfail else
                    (unsupported.kwargs.get("reason") or (unsupported.args[0] if unsupported.args else "")) if unsupported else None,
             "unsupported": bool(unsupported),
+            "quirk": item.get_closest_marker("quirk") is not None,
         }
 
 
@@ -60,6 +63,7 @@ def pytest_runtest_logreport(report):
     elif report.when == "call":
         xfail = hasattr(report, "wasxfail")
         outcomes[report.nodeid] = (
+            "quirk" if report.outcome == "skipped" and xfail and features[report.nodeid]["quirk"] else
             "gap" if report.outcome == "skipped" and xfail else        # xfailed
             "fixed" if report.outcome == "passed" and xfail else       # xpassed: remove the marker
             "unsupported" if report.outcome == "passed" and features[report.nodeid]["unsupported"] else
@@ -90,6 +94,8 @@ def render():
         "results, Python types, rowcount, lastrowid and error codes must match. "
         "**verified** = may be listed as supported · **gap** = known difference, named after the task that closes it · "
         "**unsupported by design** = s3rds refuses it with NotSupportedError (needs a real server) · "
+        "**engine quirk** = MySQL-internal behaviour (e.g. AUTO_INCREMENT values burnt by failed inserts) "
+        "that is documented and deliberately not imitated · "
         "**regression** = was verified, now differs.", "",
         f"Whole test run: **{suite['passed']} passed**, {suite['failed']} failed, "
         f"{suite['xfailed']} expected failures (known gaps), {suite['skipped']} skipped "
@@ -100,7 +106,7 @@ def render():
         rows = [(nid, f) for nid, f in features.items() if f["suite"] == kind]
         lines += [f"## {title} — reference: {ref}", "", _counts(kind), ""]
         # docstring "Category | Feature" groups the matrix; rows without a category go under "General"
-        order = {"verified": 0, "fixed": 1, "regression": 2, "gap": 3, "unsupported": 4, "not run": 5}
+        order = {"verified": 0, "fixed": 1, "regression": 2, "gap": 3, "unsupported": 4, "quirk": 5, "not run": 6}
         groups = {}
         for nid, f in rows:
             cat, _, feat = f["feature"].partition(" | ")

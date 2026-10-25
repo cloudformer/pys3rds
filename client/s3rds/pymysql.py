@@ -177,6 +177,8 @@ def _result(columns, rows):
 # sqlglot may leave "ON DUPLICATE KEY UPDATE" or render "ON DUPLICATE KEY DO UPDATE SET"
 _ON_DUP = re.compile(r"\bON\s+DUPLICATE\s+KEY(?:\s+DO)?\s+UPDATE(?:\s+SET)?\b", re.I)
 _UPSERT_SPLIT = re.compile(r"\bON\s+CONFLICT\s+DO\s+UPDATE\s+SET\b", re.I)
+_DROP_INDEX_ON = re.compile(r"^\s*DROP\s+INDEX\s+(\S+)\s+ON\s+\S+", re.I)
+_TRUNCATE = re.compile(r"^\s*TRUNCATE\s+(?:TABLE\s+)?`?(\w+)`?\s*$", re.I)
 _VALUES_REF = re.compile(r"\bVALUES\s*\(\s*(\"?[A-Za-z_]\w*\"?)\s*\)", re.I)  # VALUES(col), never VALUES(1)
 # LAST_INSERT_ID(): SQLite's last_insert_rowid() is per connection and the server opens one per
 # request, so the driver substitutes the id it saw on its own last INSERT (MySQL's per-session semantics)
@@ -185,7 +187,7 @@ _LAST_ID_TOKEN = "__S3RDS_LAST_INSERT_ID__"
 # MySQL functions sqlglot does not map for SQLite. ONE table, one line per function:
 # MySQL name -> SQLite SQL template; {0} = first argument (defaults to 'now' when there is none).
 # A function missing here comes back as error 1305 "FUNCTION does not exist" -- add a line, nothing else.
-_FUNCS = {
+_FUNCS = {  # {0}, {1}, ... = arguments; {0} defaults to 'now' when the call has none
     "NOW": "CURRENT_TIMESTAMP",
     "CURDATE": "CURRENT_DATE",
     "CURTIME": "CURRENT_TIME",
@@ -193,6 +195,8 @@ _FUNCS = {
     "FROM_UNIXTIME": "datetime({0}, 'unixepoch')",
     "UNIX_TO_TIME": "datetime({0}, 'unixepoch')",   # sqlglot's own node name for FROM_UNIXTIME
     "LAST_INSERT_ID": _LAST_ID_TOKEN,
+    "LEFT": "SUBSTR({0}, 1, {1})",
+    "RIGHT": "SUBSTR({0}, MAX(LENGTH({0}) - ({1}), 0) + 1)",   # RIGHT(s, 0) = '', RIGHT(s, n > len) = s
 }
 
 
@@ -206,8 +210,12 @@ def _rewrite_funcs(node):
         return node
     args = node.expressions if isinstance(node, exp.Anonymous) else \
         [v for v in node.args.values() if isinstance(v, exp.Expression)]
-    first = args[0].sql(dialect="sqlite") if args else "'now'"
-    return exp.maybe_parse(template.format(first), dialect="sqlite")
+    arg_sql = [a.sql(dialect="sqlite") for a in args] or ["'now'"]
+    try:
+        text = template.format(*arg_sql)
+    except IndexError:
+        raise NotSupportedError(1582, f"wrong number of arguments for {name}()") from None
+    return exp.maybe_parse(text, dialect="sqlite")
 
 
 def _fix_create_table(tree):
@@ -276,6 +284,7 @@ def _translate(sql):
     _fix_create_table(tree)
     tree = tree.transform(_rewrite_funcs)
     out = tree.sql(dialect="sqlite")
+    out = _DROP_INDEX_ON.sub(r"DROP INDEX \1", out)       # MySQL: DROP INDEX name ON table; SQLite: no ON
     out = _ON_DUP.sub("ON CONFLICT DO UPDATE SET", out)   # upsert
     parts = _UPSERT_SPLIT.split(out, maxsplit=1)
     if len(parts) == 2:  # VALUES(col) -> excluded.col, only inside the DO UPDATE SET clause
@@ -314,6 +323,15 @@ class Connection(_sqlite.Connection):
         m = _META.match(sql)
         if m:
             return self._meta(m)
+        m = _TRUNCATE.match(sql)
+        if m:  # MySQL TRUNCATE = delete every row AND reset AUTO_INCREMENT; one transaction, one S3 write
+            table = m.group(1)
+            _sqlite.Connection.transaction(self, [
+                (f'DELETE FROM "{table}"', []),
+                ("DELETE FROM sqlite_sequence WHERE name = ?", [table]),
+            ])
+            return self._remember({"columns": [], "rows": [], "rowcount": 0, "lastrowid": None,
+                                   "ms": self.last.get("ms"), "s3": self.last.get("s3")})
         qmark, args = _bind(sql, params)
         try:
             return self._remember(super().execute(self._finalize(_translate(qmark)), args))

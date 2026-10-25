@@ -183,6 +183,25 @@ def test_functions(conn):
     assert conn.query("SELECT FROM_UNIXTIME(0) AS f")[0]["f"] == "1970-01-01 00:00:00"
 
 
+def test_left_right(conn):
+    row = conn.query("SELECT LEFT('hello', 2) AS l, RIGHT('hello', 2) AS r, RIGHT('hello', 0) AS z, RIGHT('hi', 9) AS big")[0]
+    assert row == {"l": "he", "r": "lo", "z": "", "big": "hi"}
+
+
+def test_drop_index_on_and_truncate(conn):
+    conn.execute("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, v VARCHAR(10))")
+    conn.execute("CREATE UNIQUE INDEX uq ON t (v)")
+    conn.execute("INSERT INTO t (v) VALUES ('a')")
+    with pytest.raises(IntegrityError):
+        conn.execute("INSERT INTO t (v) VALUES ('a')")
+    conn.execute("DROP INDEX uq ON t")
+    conn.execute("INSERT INTO t (v) VALUES ('a')")          # allowed once the index is gone
+    conn.execute("TRUNCATE TABLE t")
+    assert conn.query("SELECT COUNT(*) AS n FROM t") == [{"n": 0}]
+    conn.execute("INSERT INTO t (v) VALUES ('b')")
+    assert conn.query("SELECT id FROM t") == [{"id": 1}]    # AUTO_INCREMENT was reset, like MySQL
+
+
 def test_psycopg2_placeholder_raises():
     with pytest.raises(s3rds.psycopg2.NotSupportedError):
         s3rds.psycopg2.connect(host="x", user="u", password="p", dbname="d")

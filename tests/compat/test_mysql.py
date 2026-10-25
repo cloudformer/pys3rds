@@ -123,7 +123,8 @@ def test_create_and_drop_index(mysql_pair):
         ("INSERT INTO t (name, score) VALUES ('a', 1)", []),
         ("INSERT INTO t (name, score) VALUES ('b', 1)", []),     # 1062 via the unique index
         ("DROP INDEX uq_score ON t", []),
-        ("INSERT INTO t (name, score) VALUES ('b', 1)", []),     # allowed now
+        # allowed now; lastrowid differs because InnoDB burns an AUTO_INCREMENT value on the failed insert above
+        ("INSERT INTO t (name, score) VALUES ('b', 1)", [], {"ignore": "lastrowid"}),
         ("SELECT COUNT(*) AS c FROM t", []),
     ])
 
@@ -323,7 +324,8 @@ def test_now_type(mysql_pair):
     mysql_pair([("SELECT NOW() IS NOT NULL AS ok, DATE(NOW()) = CURDATE() AS same, NOW() AS n", [])])
 
 
-@pytest.mark.xfail(strict=True, reason="task 5: invalid ENUM value is 1265 in MySQL strict mode, 3819 (CHECK) here")
+@pytest.mark.xfail(strict=True, reason="MySQL strict mode reports 1265 for a bad ENUM value; s3rds enforces it with a CHECK constraint (3819)")
+@pytest.mark.quirk
 def test_enum_error_code(mysql_pair):
     """Constraints & errors | ENUM rejects values outside the list with MySQL's error code"""
     mysql_pair([
@@ -333,13 +335,15 @@ def test_enum_error_code(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 5: omitted NOT NULL column is 1364 in MySQL strict mode, 1048 here (SQLite cannot tell the two apart)")
+@pytest.mark.xfail(strict=True, reason="MySQL distinguishes an omitted NOT NULL column (1364) from an explicit NULL (1048); SQLite cannot, s3rds reports 1048")
+@pytest.mark.quirk
 def test_missing_column_error_code(mysql_pair):
     """Constraints & errors | Omitting a NOT NULL column without default raises 1364"""
     mysql_pair([(T, []), (USERS, []), ("INSERT INTO t (email) VALUES ('c')", [])])
 
 
-@pytest.mark.xfail(strict=True, reason="task 5: for an upsert that updated an existing row MySQL reports rowcount 2 / lastrowid 0")
+@pytest.mark.xfail(strict=True, reason="for an upsert that updated an existing row MySQL reports rowcount 2 / lastrowid 0; s3rds reports 1 / the row id")
+@pytest.mark.quirk
 def test_upsert_rowcount_quirk(mysql_pair):
     """DML | ON DUPLICATE KEY UPDATE reports rowcount 2 and lastrowid 0 when it updates"""
     mysql_pair([
