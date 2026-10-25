@@ -1,12 +1,12 @@
-"""pys3mysql 驱动:重试原则(宁可失败,绝不重复写)、DB-API 游标、%s 占位符。"""
+"""s3rds.sqlite 驱动:重试原则(宁可失败,绝不重复写)、DB-API 游标、%s 占位符。"""
 import http.client
 import json
 import socket
 
 import pytest
 
-import pys3mysql
-from pys3mysql import Error, _to_qmark
+from s3rds import sqlite
+from s3rds.sqlite import Error, _to_qmark
 
 
 class FakeConn:
@@ -45,7 +45,7 @@ def conn(monkeypatch):
     monkeypatch.setattr(http.client, "HTTPSConnection", FakeConn)
     FakeConn.script = []
     FakeConn.sent = []
-    return pys3mysql.connect(host="x.example", user="u", password="p", database="d",
+    return sqlite.connect(host="x.example", user="u", password="p", database="d",
                              port=3306, charset="utf8mb4")  # pymysql 的多余参数被忽略
 
 
@@ -122,7 +122,7 @@ def test_cursor_select_tuples_and_dicts(conn, monkeypatch):
         assert cur.fetchone() == (1, "x")
         assert cur.fetchall() == [(2, "y")]
         assert cur.fetchone() is None
-    with conn.cursor(pys3mysql.cursors.DictCursor) as cur:
+    with conn.cursor(sqlite.cursors.DictCursor) as cur:
         cur.execute("SELECT id, a FROM t")
         assert cur.fetchall() == [{"id": 1, "a": "x"}, {"id": 2, "a": "y"}]
     with conn.cursor() as cur:

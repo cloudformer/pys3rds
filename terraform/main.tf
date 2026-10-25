@@ -67,7 +67,7 @@ data "archive_file" "db_code" {
   output_path = "${path.module}/.build/db.zip"
 }
 
-# demo 的 zip = 业务代码 + 驱动;驱动直接取 client/ 下那一份(pip 包的源码),不另拷
+# demo 的 zip = 业务代码 + s3rds 驱动包;驱动直接取 client/ 下那一份(pip 包的源码),不另拷
 data "archive_file" "demo_code" {
   type        = "zip"
   output_path = "${path.module}/.build/demo.zip"
@@ -75,9 +75,12 @@ data "archive_file" "demo_code" {
     filename = "lambda_function.py"
     content  = file("${path.module}/../src/demo/lambda_function.py")
   }
-  source {
-    filename = "pys3mysql.py"
-    content  = file("${path.module}/../client/pys3mysql.py")
+  dynamic "source" {
+    for_each = fileset("${path.module}/../client/s3rds", "*.py")
+    content {
+      filename = "s3rds/${source.value}"
+      content  = file("${path.module}/../client/s3rds/${source.value}")
+    }
   }
 }
 

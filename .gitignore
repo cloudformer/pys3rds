@@ -2,8 +2,8 @@ __pycache__/
 *.pyc
 .DS_Store
 .pytest_cache/
-# CloudFormation deploy copies the driver next to the demo; terraform reads it from client/
-src/demo/pys3mysql.py
+# CloudFormation deploy copies the driver package next to the demo; terraform reads it from client/
+src/demo/s3rds/
 # pip 包构建产物
 client/dist/
 client/build/

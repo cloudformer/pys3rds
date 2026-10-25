@@ -63,12 +63,12 @@
   </g>
 
   <text x="170" y="350" text-anchor="middle" class="sub">your code, anywhere it runs</text>
-  <text x="170" y="368" text-anchor="middle" class="sub"><tspan text-decoration="line-through" fill="#64748B">import pymysql</tspan>  →  <tspan fill="#F1F5F9" font-weight="600">import pys3mysql</tspan></text>
+  <text x="170" y="368" text-anchor="middle" class="sub"><tspan text-decoration="line-through" fill="#64748B">import pymysql</tspan>  →  <tspan fill="#F1F5F9" font-weight="600">from s3rds import pymysql</tspan></text>
 
   <!-- compute -> endpoint -->
   <path d="M300 220 L 418 220" class="edge" marker-end="url(#arrow)"/>
   <rect x="304" y="186" width="110" height="24" rx="5" class="callout"/>
-  <text x="359" y="203" text-anchor="middle" class="callout-text">1  HTTPS · pys3rds</text>
+  <text x="359" y="203" text-anchor="middle" class="callout-text">1  HTTPS · s3rds</text>
 
   <!-- browser (outside) -->
   <g transform="translate(135,430)">

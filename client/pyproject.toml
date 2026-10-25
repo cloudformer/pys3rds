@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pys3rds"
+name = "s3rds"
 version = "0.1.0"
-description = "Serverless RDS on your own AWS account: SQLite on S3, Lambda on demand, ≈ $0 when idle. Drivers shaped like the standard clients (pys3mysql ↔ pymysql)."
+description = "A truly serverless RDS on your own AWS account: Lambda URL endpoint, SQLite on S3, ≈ $0 when idle. Drivers named after the standard clients: s3rds.sqlite, s3rds.pymysql."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -21,10 +21,11 @@ classifiers = [
 ]
 dependencies = []  # standard library only
 
+[project.optional-dependencies]
+mysql = ["sqlglot>=25.0"]  # s3rds.pymysql: MySQL -> SQLite dialect translation
+
 [project.urls]
-Homepage = "https://github.com/cloudformer/pys3rds"
+Homepage = "https://github.com/cloudformer/s3rds"
 
 [tool.setuptools]
-# One install, several top-level driver modules (pys3mysql now, pys3pgsql later)
-packages = ["pys3rds"]
-py-modules = ["pys3mysql"]
+packages = ["s3rds"]

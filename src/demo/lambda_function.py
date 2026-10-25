@@ -1,8 +1,8 @@
 """srds demo:示例业务 Lambda。
 
 业务服务不直接碰 S3——把 srds db lambda 当作 RDS endpoint,
-通过 pys3mysql 驱动(零依赖,接口同 pymysql)连过去。
-ECS / EC2 / 本地脚本的接入方式一模一样:pip install pys3mysql + 四个连接参数。
+通过 s3rds 驱动(零依赖,接口同 pymysql)连过去。
+ECS / EC2 / 本地脚本的接入方式一模一样:pip install s3rds + 四个连接参数。
 
 GET  /items          列表
 POST /items {text}   插入一条
@@ -11,13 +11,13 @@ import base64
 import json
 import os
 
-import pys3mysql
+from s3rds import sqlite
 
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")  # demo 自己 API 的门,与数据库凭证无关
 
 # 连接参数与 RDS 完全同构。未来迁真 RDS:环境变量换成 RDS 的值,
-# import pys3mysql → import pymysql,下面这几行一个字不改。
-DB = pys3mysql.connect(
+# `from s3rds import pymysql` → `import pymysql`,下面这几行一个字不改。
+DB = sqlite.connect(
     host=os.environ["DB_ENDPOINT"],
     user=os.environ["DB_USER"],
     password=os.environ["DB_PASSWORD"],
@@ -84,7 +84,7 @@ def lambda_handler(event, context):
         return _json(404, {"error": f"no route: {method} {path}"})
     except ValueError as e:
         return _json(400, {"error": f"bad request: {e}"})
-    except pys3mysql.Error as e:
+    except sqlite.Error as e:
         return _json(502, {"error": f"database: {e}"})
     except Exception as e:
         return _json(500, {"error": f"{type(e).__name__}: {e}"})

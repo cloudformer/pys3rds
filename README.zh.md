@@ -1,10 +1,10 @@
-# pys3rds
+# s3rds
 
 **真·serverless 的 RDS：Lambda URL 就是数据库 endpoint，S3 上的 SQLite 就是存储，闲时 ≈ $0。**
 
 [English](README.md) · *Redefine Serverless* 系列 —— 用 AWS 原语重做那些"闲着也要钱"的托管服务。
 
-![pys3rds 架构](docs/architecture.svg)
+![s3rds 架构](docs/architecture.svg)
 
 > 设计原则：这是一个关系型数据库，数据正确性第一——原子性、一致性不妥协，
 > 写入可以失败，但绝不重复、绝不写错。优势是省钱（闲时 ≈ $0），代价是性能一般。
@@ -16,12 +16,12 @@ AWS 的"serverless"大多指**实例会自动伸缩**，很少指**根本没有�
 
 | 方案 | 闲时月费（us-east-2，约数） |
 |---|---|
-| **pys3rds** | **≈ $0** —— 只有 S3 存储费，20 MB 的库 ≈ $0.0005 |
+| **s3rds** | **≈ $0** —— 只有 S3 存储费，20 MB 的库 ≈ $0.0005 |
 | RDS MySQL `db.t4g.micro`（最便宜的 provisioned） | ~$14（实例 + 20 GB gp3；免费层只有 12 个月） |
 | RDS MySQL `db.t4g.medium` | ~$50 |
 | Aurora Serverless v2（最低 0.5 ACU） | ~$45（暂停了存储也照收） |
 
-pys3rds 没有实例，两次请求之间什么都不在运行。Lambda 在永久免费额度内
+s3rds 没有实例，两次请求之间什么都不在运行。Lambda 在永久免费额度内
 （每月 100 万次请求 + 40 万 GB·秒），超出后 $0.20/百万次。
 
 ## 怎么工作
@@ -35,7 +35,7 @@ pys3rds 没有实例，两次请求之间什么都不在运行。Lambda 在永�
 
 对应 RDS 的概念：
 
-| RDS | pys3rds |
+| RDS | s3rds |
 |---|---|
 | 实例 endpoint | db lambda 的 Function URL |
 | 实例里的一个 database | 桶里的一个 `.sqlite` 对象 |
@@ -62,10 +62,10 @@ terraform output                                  # db_url、db_ro_url、demo_ur
 
 ```bash
 cp cloudformation/example-params.json cloudformation/params.json   # 改密码
-cp client/pys3mysql.py src/demo/                                   # demo 要带上驱动
+cp client/sqlite.py src/demo/                                   # demo 要带上驱动
 aws cloudformation package --template-file cloudformation/template.yaml \
-    --s3-bucket <你自己任意一个桶> --output-template-file /tmp/pys3rds.yaml
-aws cloudformation deploy --template-file /tmp/pys3rds.yaml --stack-name pys3rds \
+    --s3-bucket <你自己任意一个桶> --output-template-file /tmp/s3rds.yaml
+aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
     --capabilities CAPABILITY_IAM --parameter-overrides file://cloudformation/params.json
 ```
 
@@ -80,20 +80,24 @@ aws cloudformation deploy --template-file /tmp/pys3rds.yaml --stack-name pys3rds
 ### 3. 程序连接
 
 ```bash
-pip install pys3rds
+pip install s3rds              # pys3sqlite:SQLite 方言,零依赖
+pip install "s3rds[mysql]"     # + pys3mysql:写 MySQL,客户端翻译(sqlglot)
 ```
 
-```python
-import pys3mysql                                    # 将来: import pymysql,其他一个字不改
+想写哪种方言就 import 哪个，API 都是 pymysql 形状；将来上真 RDS 就是最后一次 `import pymysql`：
 
-conn = pys3mysql.connect(host="xxxx.lambda-url.us-east-2.on.aws",
+```python
+from s3rds import sqlite                            # SQLite 方言
+# from s3rds import pymysql                         # MySQL 方言(见下面「MySQL 方言」)
+
+conn = sqlite.connect(host="xxxx.lambda-url.us-east-2.on.aws",
                          user="admin", password="...", database="blog")
 
 with conn.cursor() as cur:
     cur.execute("INSERT INTO posts (title) VALUES (%s)", ["hello"])
     print(cur.lastrowid)
 
-with conn.cursor(pys3mysql.cursors.DictCursor) as cur:
+with conn.cursor(sqlite.cursors.DictCursor) as cur:
     cur.execute("SELECT * FROM posts WHERE id = %s", [1])
     print(cur.fetchall())
 
@@ -128,6 +132,23 @@ pip install pytest boto3
 pytest tests/ -v
 ```
 
+## MySQL 方言（`s3rds.pymysql`）
+
+写 MySQL，跑在同一个 endpoint 上。语句在客户端翻译（sqlglot，按语句缓存）：
+
+- `%s` / `%(name)s` 占位符、反引号、`LIMIT offset, count`
+- `AUTO_INCREMENT` → `INTEGER PRIMARY KEY AUTOINCREMENT`；`ENUM(...)` → `TEXT CHECK (...)`；
+  文本列加 `COLLATE NOCASE`（模拟 MySQL 默认不区分大小写）
+- `INSERT IGNORE`、`ON DUPLICATE KEY UPDATE`（`VALUES(col)` → `excluded.col`）、`LAST_INSERT_ID()`
+- `SHOW TABLES / DATABASES / COLUMNS / CREATE TABLE / INDEX`、`DESCRIBE`、`SELECT VERSION()`、`SELECT DATABASE()`
+- 报错是 pymysql 风格的异常类 + MySQL 错误码：1062 重复键、1146 表不存在、1054 列不存在、1064 语法……
+- `ENGINE=`、`CHARSET=`、`ON UPDATE CURRENT_TIMESTAMP`、行内 `KEY`/`INDEX` 会被丢弃
+
+不支持的——抛 `NotSupportedError`，绝不静默出错：存储过程/函数、触发器、`FULLTEXT`、
+`SELECT … FOR UPDATE`、`LOCK TABLES`、`GRANT`/用户管理。结果值按存储原样返回（暂无 `DATETIME` → `datetime` 转换）。
+
+`tests/test_pys3mysql.py` 在真实服务端代码上跑完整方言测试；设置 `MYSQL_DSN` 还能逐条和真 MySQL 对照。
+
 ## 适用规模
 
 | 单库大小 | 结论 |
@@ -147,7 +168,7 @@ pytest tests/ -v
 ```
 src/db/           数据库本体:lambda_function.py(HTTP API)、s3_sqlite.py(引擎)、index.html(控制台)
 src/demo/         业务 Lambda 示例,把 endpoint 当 RDS 用
-client/           pip 包 pys3rds:pys3mysql.py(驱动)、pyproject.toml
+client/           pip 包 s3rds:s3rds/sqlite.py、s3rds/pymysql.py、s3rds/psycopg2.py、pyproject.toml
 terraform/        部署方式 A
 cloudformation/   部署方式 B
 tests/            正确性测试
@@ -157,11 +178,29 @@ MIGRATION.md      长大了怎么迁 RDS MySQL
 
 ## 路线图
 
-- `pys3mysql` 0.2：MySQL 方言兼容层（`AUTO_INCREMENT`、`NOW()`、`INSERT IGNORE`、
-  `ON DUPLICATE KEY UPDATE`、`SHOW TABLES`、MySQL 错误码），用 Docker 里的真 MySQL 对照验证。
-  不支持的特性抛 `NotSupportedError`，绝不静默出错。
-- `pys3pgsql`：psycopg2 形状的驱动。
+- `s3rds.pymysql`：`DATETIME`/`DECIMAL` 结果类型转换、更多 MySQL 函数、公开的兼容性报告。
+- `s3rds.psycopg2`：PostgreSQL 方言（占位模块已随包发布，`connect()` 在实现前会直接报错）。
 - CloudFormation 一键 *Launch Stack* 按钮。
+
+## Redefine Serverless 系列
+
+那些"闲着也计费"的 AWS serverless 服务，用闲时 ≈ $0 的原语重做一遍。
+统一规则：项目名 = pip 包名 = import 名；子模块 = 它模仿的标准库名，切回真服务只改一行 import。
+
+| 替代 | 闲时底价/月 | 原语 | 项目 | 用法 | 状态 |
+|---|---|---|---|---|---|
+| RDS / Aurora Serverless | ~$14–45 | S3 + Lambda | **s3rds** | `from s3rds import pymysql` · `sqlite` · `psycopg2` | 本仓库 |
+| Redis / ElastiCache Serverless | ~$90 | DynamoDB | **pyredis** | `from pyredis import redis` | 下一个 |
+| Airflow / MWAA | ~$360 | Lambda + EventBridge + Step Functions | **lambdaflow** | `from lambdaflow import airflow` | 计划 |
+| Redshift Serverless | 一跑 ~$3/h | S3 + DuckDB | **s3shift** | `from s3shift import redshift_connector` | 计划 |
+| OpenSearch Serverless | ~$350 | S3 + SQLite FTS5（复用 s3rds） | **s3search** | `from s3search import opensearchpy` | 计划 |
+| Kafka / MSK Serverless | ~$550 | SQS | **sqskafka** | `from sqskafka import kafka` | 计划 |
+| DocumentDB（MongoDB） | ~$200 | SQLite JSON1（复用 s3rds） | **s3mongo** | `from s3mongo import pymongo` | 计划 |
+| Amazon MQ（RabbitMQ） | ~$20–50 | SQS | **sqsmq** | `from sqsmq import pika` | 计划 |
+
+顺带覆盖：MemoryDB（→ pyredis）、Kinesis Data Streams（→ sqskafka）、Timestream（→ s3shift）。
+
+共同原则：闲时 ≈ $0、无容器无实例、drop-in 标准接口、同一套测试跑真服务和重做版对照、MIT。
 
 ## 协议
 

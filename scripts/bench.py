@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""srds 读写延迟/吞吐基准测试(走 pys3mysql 驱动,测业务代码看到的端到端延迟)。
+"""srds 读写延迟/吞吐基准测试(走 s3rds.sqlite 驱动,测业务代码看到的端到端延迟)。
 
 参数全部自动获取,直接跑:
   python3 scripts/bench.py
@@ -28,7 +28,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TF_DIR = os.path.join(ROOT, "terraform")
 sys.path.insert(0, os.path.join(ROOT, "client"))
-import pys3mysql  # noqa: E402
+from s3rds import sqlite  # noqa: E402
 
 
 def load_conn(varfile=None):
@@ -88,7 +88,7 @@ def main():
     url, user, password = load_conn(varfile)
     print(f"endpoint: {url}\n库: {dbname}  用户: {user}  串行 x{n}\n")
 
-    db = pys3mysql.connect(host=url, user=user, password=password, database=dbname)
+    db = sqlite.connect(host=url, user=user, password=password, database=dbname)
     db.create_database()
     db.execute("CREATE TABLE IF NOT EXISTS bench "
                "(id INTEGER PRIMARY KEY AUTOINCREMENT, v TEXT)")
