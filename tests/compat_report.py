@@ -16,9 +16,11 @@ outcomes = {}   # nodeid -> "verified" | "gap" | "regression" | "fixed" | "not r
 versions = {"mysql": None}
 suite = {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0}  # every test in the run
 
-STATUS = {"verified": "✅ verified", "gap": "❌ gap", "regression": "🔴 regression",
-          "fixed": "🟡 fixed — remove xfail marker", "unsupported": "⛔ unsupported by design",
-          "quirk": "⚪ engine quirk (documented, not aligned)", "not run": "⏭ not run"}
+STATUS = {"verified": "✅", "gap": "❌ gap", "regression": "🔴 regression", "fixed": "🟡 fixed",
+          "unsupported": "⛔", "quirk": "⚪ quirk", "not run": "⏭"}
+LEGEND = ("✅ verified · ❌ gap — known difference, the note names the task that closes it · "
+          "⚪ engine quirk — documented, deliberately not aligned · ⛔ unsupported by design, refused with "
+          "NotSupportedError · 🟡 fixed — xfail marker to remove · 🔴 regression · ⏭ not run")
 
 
 def pytest_configure(config):
@@ -91,12 +93,7 @@ def render():
         f"Generated {datetime.date.today()} by `pytest tests` · s3rds {s3rds.__version__} · "
         f"sqlglot {sg} · Python {platform.python_version()}", "",
         "Each row is one feature exercised with the same SQL on the reference database and on s3rds; "
-        "results, Python types, rowcount, lastrowid and error codes must match. "
-        "**verified** = may be listed as supported · **gap** = known difference, named after the task that closes it · "
-        "**unsupported by design** = s3rds refuses it with NotSupportedError (needs a real server) · "
-        "**engine quirk** = MySQL-internal behaviour (e.g. AUTO_INCREMENT values burnt by failed inserts) "
-        "that is documented and deliberately not imitated · "
-        "**regression** = was verified, now differs.", "",
+        "results, Python types, rowcount, lastrowid and error codes must match.", "",
         f"Whole test run: **{suite['passed']} passed**, {suite['failed']} failed, "
         f"{suite['xfailed']} expected failures (known gaps), {suite['skipped']} skipped "
         "— regression suite (`tests/`) and compatibility suite (`tests/compat/`) together.", "",
@@ -104,19 +101,19 @@ def render():
     for kind, title, ref in [("mysql", "s3rds.pymysql vs MySQL", versions["mysql"] or "MySQL (not run)"),
                              ("sqlite", "s3rds.sqlite vs sqlite3", f"SQLite {sqlite3.sqlite_version} (standard library)")]:
         rows = [(nid, f) for nid, f in features.items() if f["suite"] == kind]
-        lines += [f"## {title} — reference: {ref}", "", _counts(kind), ""]
-        # docstring "Category | Feature" groups the matrix; rows without a category go under "General"
-        order = {"verified": 0, "fixed": 1, "regression": 2, "gap": 3, "unsupported": 4, "quirk": 5, "not run": 6}
+        lines += [f"## {title} — reference: {ref}", "", _counts(kind), "", LEGEND, ""]
+        # docstring "Category | Feature | short note": the category becomes a bold separator row
+        order = {"verified": 0, "fixed": 1, "regression": 2, "gap": 3, "quirk": 4, "unsupported": 5, "not run": 6}
         groups = {}
         for nid, f in rows:
-            cat, _, feat = f["feature"].partition(" | ")
-            if not feat:
-                cat, feat = "General", cat
-            groups.setdefault(cat, []).append((nid, feat, f))
-        lines += ["| Category | Status | Feature | Notes |", "|---|---|---|---|"]
+            parts = [p.strip() for p in f["feature"].split(" | ")]
+            cat, feat, note = (parts + ["", ""])[:3] if len(parts) >= 2 else ("General", parts[0], "")
+            groups.setdefault(cat, []).append((nid, feat, note))
+        lines += ["| Feature | Status | Note |", "|---|---|---|"]
         for cat in sorted(groups, key=lambda c: (CATEGORY_ORDER.index(c) if c in CATEGORY_ORDER else 99, c)):
-            for nid, feat, f in sorted(groups[cat], key=lambda x: (order[outcomes.get(x[0], "not run")], x[1])):
-                lines.append(f"| {cat} | {STATUS[outcomes.get(nid, 'not run')]} | {feat} | {f['gap'] or ''} |")
+            lines.append(f"| **{cat}** | | |")
+            for nid, feat, note in sorted(groups[cat], key=lambda x: (order[outcomes.get(x[0], "not run")], x[1])):
+                lines.append(f"| {feat} | {STATUS[outcomes.get(nid, 'not run')]} | {note} |")
         lines.append("")
     return "\n".join(lines)
 

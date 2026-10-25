@@ -256,21 +256,21 @@ def test_truncate(mysql_pair):
 
 @pytest.mark.unsupported("row locks need a real server; s3rds has one writer and no sessions")
 def test_select_for_update_refused(mysql_pair):
-    """Unsupported | SELECT ... FOR UPDATE"""
+    """Unsupported | SELECT ... FOR UPDATE | row locks need a real server"""
     mysql_pair([(T, []), (USERS, [])])
     mysql_pair.unsupported("SELECT * FROM t WHERE id = 1 FOR UPDATE")
 
 
 @pytest.mark.unsupported("stored procedures / triggers run inside the server; use application code")
 def test_trigger_refused(mysql_pair):
-    """Unsupported | CREATE TRIGGER"""
+    """Unsupported | CREATE TRIGGER | server-side code; use the application"""
     mysql_pair([(T, []), (USERS, [])])
     mysql_pair.unsupported("CREATE TRIGGER tr BEFORE INSERT ON t FOR EACH ROW SET NEW.score = 1")
 
 
 @pytest.mark.unsupported("table locks need a real server")
 def test_lock_tables_refused(mysql_pair):
-    """Unsupported | LOCK TABLES"""
+    """Unsupported | LOCK TABLES | table locks need a real server"""
     mysql_pair([(T, []), (USERS, [])])
     mysql_pair.unsupported("LOCK TABLES t WRITE")
     real, _ = mysql_pair.both("UNLOCK TABLES")  # release the reference side's lock
@@ -281,7 +281,7 @@ def test_lock_tables_refused(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 8: DATETIME/DECIMAL come back as str/int, pymysql returns datetime/Decimal")
 def test_result_types(mysql_pair):
-    """Types | Column types on results: DATETIME → datetime, DECIMAL → Decimal, TINYINT(1) → int"""
+    """Types | Column types on results: DATETIME → datetime, DECIMAL → Decimal, TINYINT(1) → int | task 8"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (d DATETIME, x DECIMAL(10,2), b TINYINT(1))", []),
@@ -292,7 +292,7 @@ def test_result_types(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 8: SUM() is Decimal in MySQL, int here")
 def test_aggregate_types(mysql_pair):
-    """Types | Aggregate result types: COUNT(*) int, SUM(INT) Decimal"""
+    """Types | Aggregate result types: COUNT(*) int, SUM(INT) Decimal | task 8"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (name, score) VALUES ('a', 1), ('b', 2)", []),
@@ -302,7 +302,7 @@ def test_aggregate_types(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 6: DATE_ADD drops the time part (DATE() instead of datetime())")
 def test_date_add_keeps_time(mysql_pair):
-    """Functions | DATE_ADD / DATE_SUB with INTERVAL keep the time part"""
+    """Functions | DATE_ADD / DATE_SUB with INTERVAL keep the time part | task 6"""
     mysql_pair([
         ("SELECT DATE_ADD('2026-01-01 10:30:00', INTERVAL 1 DAY) AS d", []),
     ])
@@ -310,7 +310,7 @@ def test_date_add_keeps_time(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 7: inline KEY idx (col) is dropped instead of becoming CREATE INDEX")
 def test_inline_index_exists(mysql_pair):
-    """DDL | Inline KEY / INDEX in CREATE TABLE creates the index"""
+    """DDL | Inline KEY / INDEX in CREATE TABLE creates the index | task 7"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, title VARCHAR(100), KEY idx_title (title))", []),
@@ -320,14 +320,14 @@ def test_inline_index_exists(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 9: NOW() returns datetime in pymysql, str here")
 def test_now_type(mysql_pair):
-    """Types | NOW() / CURDATE() return datetime / date objects"""
+    """Types | NOW() / CURDATE() return datetime / date objects | task 9"""
     mysql_pair([("SELECT NOW() IS NOT NULL AS ok, DATE(NOW()) = CURDATE() AS same, NOW() AS n", [])])
 
 
 @pytest.mark.xfail(strict=True, reason="MySQL strict mode reports 1265 for a bad ENUM value; s3rds enforces it with a CHECK constraint (3819)")
 @pytest.mark.quirk
 def test_enum_error_code(mysql_pair):
-    """Constraints & errors | ENUM rejects values outside the list with MySQL's error code"""
+    """Constraints & errors | ENUM rejects values outside the list with MySQL's error code | MySQL 1265, s3rds 3819 (CHECK)"""
     mysql_pair([
         (T, []),
         ("CREATE TABLE t (s ENUM('a','b'))", []),
@@ -338,14 +338,14 @@ def test_enum_error_code(mysql_pair):
 @pytest.mark.xfail(strict=True, reason="MySQL distinguishes an omitted NOT NULL column (1364) from an explicit NULL (1048); SQLite cannot, s3rds reports 1048")
 @pytest.mark.quirk
 def test_missing_column_error_code(mysql_pair):
-    """Constraints & errors | Omitting a NOT NULL column without default raises 1364"""
+    """Constraints & errors | Omitting a NOT NULL column without default raises 1364 | MySQL 1364, s3rds 1048"""
     mysql_pair([(T, []), (USERS, []), ("INSERT INTO t (email) VALUES ('c')", [])])
 
 
 @pytest.mark.xfail(strict=True, reason="for an upsert that updated an existing row MySQL reports rowcount 2 / lastrowid 0; s3rds reports 1 / the row id")
 @pytest.mark.quirk
 def test_upsert_rowcount_quirk(mysql_pair):
-    """DML | ON DUPLICATE KEY UPDATE reports rowcount 2 and lastrowid 0 when it updates"""
+    """DML | ON DUPLICATE KEY UPDATE reports rowcount 2 and lastrowid 0 when it updates | MySQL 2 / 0, s3rds 1 / row id"""
     mysql_pair([
         (T, []), (USERS, []),
         ("INSERT INTO t (id, name) VALUES (1, 'a')", []),
@@ -355,7 +355,7 @@ def test_upsert_rowcount_quirk(mysql_pair):
 
 @pytest.mark.xfail(strict=True, reason="task 12: DESCRIBE shows SQLite type names (text(50)) not MySQL's (varchar(50))")
 def test_describe(mysql_pair):
-    """Metadata | DESCRIBE shows MySQL type names"""
+    """Metadata | DESCRIBE shows MySQL type names | task 12"""
     mysql_pair([
         (T, []), (USERS, []),
         ("DESCRIBE t", []),
