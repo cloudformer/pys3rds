@@ -58,17 +58,17 @@ Mapped to RDS concepts:
 
 ```bash
 cp terraform/example.json terraform/my.json      # set aws_profile, env, db_password, auth_token
-cd terraform
-terraform init
-terraform apply -var-file=my.json
-terraform output                                  # db_url, db_ro_url, demo_url
+terraform -chdir=terraform init
+terraform -chdir=terraform apply -var-file=my.json
+terraform -chdir=terraform output                 # db_url, db_ro_url, demo_url
+terraform -chdir=terraform destroy -var-file=my.json   # tear everything down (the bucket must be empty)
 ```
 
 **CloudFormation** (AWS CLI only)
 
 ```bash
 cp cloudformation/example-params.json cloudformation/params.json   # set passwords
-cp client/sqlite.py src/demo/                                   # demo bundles the driver
+cp -r client/s3rds src/demo/                                    # demo bundles the driver
 aws cloudformation package --template-file cloudformation/template.yaml \
     --s3-bucket <any-bucket-you-own> --output-template-file /tmp/s3rds.yaml
 aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \

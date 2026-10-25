@@ -56,17 +56,17 @@ s3rds 没有实例，两次请求之间什么都不在运行。Lambda 在永久�
 
 ```bash
 cp terraform/example.json terraform/my.json      # 改 aws_profile、env、db_password、auth_token
-cd terraform
-terraform init
-terraform apply -var-file=my.json
-terraform output                                  # db_url、db_ro_url、demo_url
+terraform -chdir=terraform init
+terraform -chdir=terraform apply -var-file=my.json
+terraform -chdir=terraform output                 # db_url、db_ro_url、demo_url
+terraform -chdir=terraform destroy -var-file=my.json   # 全部拆掉（桶要先清空）
 ```
 
 **CloudFormation**（只需要 AWS CLI）
 
 ```bash
 cp cloudformation/example-params.json cloudformation/params.json   # 改密码
-cp client/sqlite.py src/demo/                                   # demo 要带上驱动
+cp -r client/s3rds src/demo/                                    # demo 要带上驱动
 aws cloudformation package --template-file cloudformation/template.yaml \
     --s3-bucket <你自己任意一个桶> --output-template-file /tmp/s3rds.yaml
 aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
