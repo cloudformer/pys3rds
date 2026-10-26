@@ -1,0 +1,13 @@
+name: tests
+# Every push. The logic lives in cloudformer/redefine-aws-serverless-workflow; change it there once.
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  test:
+    uses: cloudformer/redefine-aws-serverless-workflow/.github/workflows/reusable-test.yml@main
+    with:
+      install: "pytest boto3 pymysql sqlglot"
+      compose-service: "mysql"
+      test-env: "MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat"

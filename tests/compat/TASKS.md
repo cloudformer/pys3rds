@@ -11,8 +11,7 @@ The numbers [REPORT.md](REPORT.md) refers to in its gap notes.
 | 5 | `strict=True` connection option: refuse any statement the translator does not recognise instead of best-effort |
 | 10 | pin the sqlglot version in `client/pyproject.toml` (translations change between releases) |
 | 19 | Lambda timeout 15 s → 30 s (terraform + CloudFormation) |
-| 20 | GitHub Actions: tests on push, trusted publishing to PyPI on tag — with 0.2.0 |
-| 21 | CHANGELOG entries for 0.1.2 / 0.2.0 |
+| 21 | CHANGELOG entry for 0.2.0 |
 
 Permanent, not tasks: ⚪ quirks (documented MySQL behaviour we do not imitate) and ⛔ unsupported
 (row / table locks, triggers, procedures, user variables, FULLTEXT, users / GRANT, partitions).
@@ -36,3 +35,4 @@ Permanent, not tasks: ⚪ quirks (documented MySQL behaviour we do not imitate) 
 | 15 | `UPDATE … JOIN`, `DELETE t FROM t JOIN …` | 0.1.2 |
 | 16 | functions: `YEAR` … `SECOND`, `DAYOFWEEK`, `DATEDIFF`, `TIMESTAMPDIFF`, `LPAD` / `RPAD`, `REPEAT`, `SUBSTRING_INDEX`, `->` / `->>`, `UUID`, `RAND` | 0.1.2 |
 | 17 | `information_schema.tables` / `columns`, `DROP TABLE` unknown → 1051, `USE` / `SET …` as no-ops | 0.1.2 |
+| 20 | GitHub Actions: tests (with MySQL) on push, trusted publishing to PyPI on `v*` tags | — |

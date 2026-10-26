@@ -157,6 +157,13 @@ docker compose -f tests/compat/docker-compose.yml down
 （连接池和 ORM 归还连接时会调它）。多条语句要同成同败，用 `conn.transaction([...])`（一次提交、一次 S3 写入）
 或 `cursor.executemany(...)`。
 
+**代码该怎么写**（无状态，和 Lambda 一样）：一条语句 = 一次落盘；先读、再决定、最后把该一起成功的写全放进
+一个 `transaction([...])`；能放进 SQL 的判断就放进去（`WHERE balance >= %s`、`ON DUPLICATE KEY UPDATE`、
+`INSERT … SELECT`），别跨调用读-改-写；语句写成幂等的，重试才安全。不适合的模式只有一种：
+"先写、再读自己没提交的行、再决定"——没有会话来保存这个状态。
+0.2.0 会加 `autocommit=False`，给已经在调 `commit()` / `rollback()` 的代码用：写先攒着，`commit()` 时作为
+一个事务发出去；上面的规则不变。
+
 **大结果集。** 服务端按 4 MB 分页，驱动在 `execute()` 里取完所有页再返回，结果永远完整，绝不静默截断。
 翻页期间库被改了，服务端拒绝混合两个版本，驱动自动重跑查询。
 
@@ -188,6 +195,10 @@ pytest tests/ -v
 
 不支持的——抛 `NotSupportedError`，绝不静默出错：存储过程/函数、触发器、`FULLTEXT`、
 `SELECT … FOR UPDATE`、`LOCK TABLES`、`GRANT`/用户管理。
+
+**适合谁：** 直接写 SQL 的代码——pymysql 风格的调用、自己的数据访问层。ORM 不是目标：SQLAlchemy / Django
+依赖服务端会话（连上先探测 `SHOW VARIABLES`、事务里要读到自己未提交的写），这里没有会话。
+需要 ORM 的时候就是该迁 RDS 的时候——见 [MIGRATION.md](MIGRATION.md)。
 
 结果类型和 pymysql 一致：`DATETIME` → `datetime`、`DATE` → `date`、`TIME` → `timedelta`、`DECIMAL` /
 `SUM` / `AVG` / 整数除法 → `Decimal`、`BLOB` → `bytes`（双向）、`NOW()` → `datetime`。
@@ -225,11 +236,20 @@ scripts/          bench.py
 MIGRATION.md      长大了怎么迁 RDS MySQL
 ```
 
+## 发版
+
+CI（`.github/workflows/test.yml`）每次 push 跑全部测试（含 MySQL 对比）。发版就是打 tag：
+
+```bash
+# 改 client/pyproject.toml 和 client/s3rds/sqlite.py 的版本号,写 CHANGELOG,提交,然后
+git tag v0.2.0 && git push --tags      # 测试 → 构建 client/ → 发 PyPI(trusted publishing,不用 token)
+```
+
 ## 路线图
 
-- `s3rds.pymysql`：`DATETIME`/`DECIMAL` 结果类型转换、更多 MySQL 函数、公开的兼容性报告。
-- `s3rds.psycopg2`：PostgreSQL 方言（占位模块已随包发布，`connect()` 在实现前会直接报错）。
-- CloudFormation 一键 *Launch Stack* 按钮。
+待办在 [tests/compat/TASKS.md](tests/compat/TASKS.md)。下一步：0.2.0 缓冲事务（`autocommit=False`），
+然后 `s3rds.psycopg2`（PostgreSQL 方言；占位模块已随包发布，`connect()` 在实现前会直接报错）和
+CloudFormation 一键 *Launch Stack* 按钮。
 
 ## Redefine Serverless 系列
 

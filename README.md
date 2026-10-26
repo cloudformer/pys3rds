@@ -161,6 +161,14 @@ docker compose -f tests/compat/docker-compose.yml down
 was written since the last `commit()`, and stays silent otherwise. When several statements must succeed or
 fail together, use `conn.transaction([...])` (one commit, one S3 write) or `cursor.executemany(...)`.
 
+**How to write code for it** (stateless, like every Lambda): one statement = one durable write; read first,
+decide, then write everything that belongs together in one `transaction([...])`; put the decision in the
+SQL where you can (`WHERE balance >= %s`, `ON DUPLICATE KEY UPDATE`, `INSERT … SELECT`) instead of
+read-modify-write across calls; make retries safe with idempotent statements. What does not fit:
+"write, then read my own uncommitted rows, then decide" — there is no session to hold that state.
+0.2.0 adds `autocommit=False` for code that already calls `commit()` / `rollback()`: writes are
+buffered and sent as one transaction on `commit()`; the rule above still applies.
+
 **Large results.** The server pages results at 4 MB and the driver fetches every page inside `execute()`,
 so you always get the complete result; nothing is ever truncated silently. If the database changes while
 paging, the server refuses to mix versions and the driver re-runs the query.
@@ -193,6 +201,11 @@ Write MySQL, run on the same endpoint. Statements are translated on the client (
 
 Not supported — raises `NotSupportedError`, never silently wrong: stored procedures/functions, triggers,
 `FULLTEXT`, `SELECT … FOR UPDATE`, `LOCK TABLES`, `GRANT`/users.
+
+**Who this is for:** code that writes SQL — pymysql-style calls, your own data-access layer. ORMs are not a
+target: SQLAlchemy / Django need a server session (they probe `SHOW VARIABLES`, read their own uncommitted
+writes inside a transaction), and there is no session here. If you need an ORM, that is the moment to move
+to RDS — see [MIGRATION.md](MIGRATION.md).
 
 Result types match pymysql: `DATETIME` → `datetime`, `DATE` → `date`, `TIME` → `timedelta`, `DECIMAL` /
 `SUM` / `AVG` / integer division → `Decimal`, `BLOB` → `bytes` (both directions), `NOW()` → `datetime`.
@@ -231,11 +244,20 @@ scripts/          bench.py
 MIGRATION.md      how to move to RDS MySQL when you outgrow this
 ```
 
+## Releasing
+
+CI (`.github/workflows/test.yml`) runs the whole suite, MySQL included, on every push. A release is a tag:
+
+```bash
+# bump version in client/pyproject.toml and client/s3rds/sqlite.py, add the CHANGELOG entry, commit, then
+git tag v0.2.0 && git push --tags      # tests → build client/ → PyPI (trusted publishing, no token)
+```
+
 ## Roadmap
 
-- `s3rds.pymysql`: `DATETIME`/`DECIMAL` result conversion, more MySQL functions, a published compatibility report.
-- `s3rds.psycopg2`: PostgreSQL dialect (placeholder module ships today; `connect()` raises until implemented).
-- One-click CloudFormation *Launch Stack* button.
+Open work is tracked in [tests/compat/TASKS.md](tests/compat/TASKS.md). Next: 0.2.0 buffered transactions
+(`autocommit=False`), then `s3rds.psycopg2` (PostgreSQL dialect; the placeholder module ships today and
+`connect()` raises until implemented) and a one-click CloudFormation *Launch Stack* button.
 
 ## The Redefine Serverless series
 
