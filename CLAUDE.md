@@ -54,6 +54,10 @@ s3rds (github.com/cloudformer/s3rds) is the reference implementation; when in do
 - **One task, one run.** Fix a task completely, verify locally first, then Frank runs the comparison suite
   once. Failures are read from `tests/compat/REPORT.md` (🔴 rows carry the actual diff), not pasted.
 - **Only split when necessary** — repos, modules, services. Prefer one of each.
+- **Shared vs project-specific.** Identical across projects → template or workflow repo, referenced
+  (`uses:`), differences passed as variables; change it once. Different per project → only in the project.
+  Identical-but-copied pieces (console shell, HTTP helpers, compat_report.py) are fixed in the template and
+  ported by hand until they are worth referencing.
 - **No maintenance work by design**: no generated code to keep in sync, no abstractions for one caller,
   standard library over dependencies.
 
