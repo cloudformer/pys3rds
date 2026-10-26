@@ -1,4 +1,4 @@
-"""s3rds.sqlite 驱动:重试原则(宁可失败,绝不重复写)、DB-API 游标、%s 占位符。"""
+"""s3rds.sqlite driver: the retry rule (fail rather than duplicate a write), DB-API cursors, %s placeholders."""
 import http.client
 import json
 import socket
@@ -10,9 +10,9 @@ from s3rds.sqlite import Error, _to_qmark
 
 
 class FakeConn:
-    """script 里每项对应一次 request():'ok' | 'disconnect' | 'timeout' | 'reset_read'。"""
+    """One script entry per request(): 'ok' | 'disconnect' | 'timeout' | 'reset_read'."""
     script = []
-    sent = []  # 每次 request() 记一笔 → 服务端"收到"的次数
+    sent = []  # one entry per request() = how many times the server "received" it
     reply = {"columns": [], "rows": [], "rowcount": 1, "lastrowid": 7, "ms": 1, "s3": "cache-hit"}
 
     def __init__(self, host, timeout=None):
@@ -46,15 +46,15 @@ def conn(monkeypatch):
     FakeConn.script = []
     FakeConn.sent = []
     return sqlite.connect(host="x.example", user="u", password="p", database="d",
-                             port=3306, charset="utf8mb4")  # pymysql 的多余参数被忽略
+                             port=3306, charset="utf8mb4")  # pymysql's extra arguments are ignored
 
 
-# ---- 重试原则 ----
+# ---- the retry rule ----
 
 def test_stale_reused_connection_is_retried_once(conn):
     FakeConn.script = ["ok", "disconnect", "ok"]
-    conn.execute("INSERT INTO t VALUES (1)")   # 建立连接
-    conn.execute("INSERT INTO t VALUES (2)")   # 复用的连接被关 → 安全重发
+    conn.execute("INSERT INTO t VALUES (1)")   # opens the connection
+    conn.execute("INSERT INTO t VALUES (2)")   # the reused connection was closed -> safe to re-send
     assert len(FakeConn.sent) == 3
 
 
@@ -70,14 +70,14 @@ def test_timeout_is_never_retried(conn):
     conn.execute("SELECT 1")
     with pytest.raises(Error, match="result unknown"):
         conn.execute("INSERT INTO t VALUES (1)")
-    assert FakeConn.script == []  # 没有第三次尝试
+    assert FakeConn.script == []  # no third attempt
 
 
 def test_read_phase_failure_is_not_retried(conn):
     FakeConn.script = ["ok", "reset_read"]
     conn.execute("SELECT 1")
     with pytest.raises(Error, match="result unknown"):
-        conn.execute("INSERT INTO t VALUES (1)")  # 服务端可能已执行,绝不重发
+        conn.execute("INSERT INTO t VALUES (1)")  # the server may have run it: never re-send
     assert len(FakeConn.sent) == 2
 
 
@@ -86,7 +86,7 @@ def test_read_phase_failure_is_not_retried(conn):
 @pytest.mark.parametrize("src, expected", [
     ("SELECT * FROM t WHERE a = %s AND b = %s", "SELECT * FROM t WHERE a = ? AND b = ?"),
     ("SELECT * FROM t WHERE a = ?", "SELECT * FROM t WHERE a = ?"),
-    ("SELECT '100%s' FROM t WHERE a = %s", "SELECT '100%s' FROM t WHERE a = ?"),  # 引号内不动
+    ("SELECT '100%s' FROM t WHERE a = %s", "SELECT '100%s' FROM t WHERE a = ?"),  # untouched inside quotes
     ("SELECT \"%s\" FROM t", "SELECT \"%s\" FROM t"),
     ("SELECT 'it''s %s' FROM t WHERE a = %s", "SELECT 'it''s %s' FROM t WHERE a = ?"),
     ("SELECT a FROM t WHERE a LIKE '%%x%%' AND b = %s", "SELECT a FROM t WHERE a LIKE '%%x%%' AND b = ?"),
@@ -102,7 +102,7 @@ def test_execute_sends_qmark_sql(conn):
     assert FakeConn.sent[0] == {"sql": "INSERT INTO t (a) VALUES (?)", "params": ["x"]}
 
 
-# ---- DB-API 游标(pymysql 写法原样能跑) ----
+# ---- DB-API cursors (pymysql-style code runs as is) ----
 
 def test_cursor_dml(conn):
     FakeConn.script = ["ok"]

@@ -2,7 +2,7 @@
 
 **A truly serverless RDS: a Lambda URL is your database endpoint, SQLite on S3 is your storage, ≈ $0 when idle.**
 
-[中文说明](README.zh.md) · Part of *Redefine Serverless* — AWS primitives that cost ≈ $0 when idle.
+[中文](README.zh.md) · Part of *Redefine Serverless* — AWS primitives that cost ≈ $0 when idle.
 
 ![s3rds architecture](docs/architecture.svg)
 

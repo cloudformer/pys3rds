@@ -35,7 +35,7 @@ variable "name" {
   default     = "srds"
 }
 
-# ---- 数据库凭证(语义对齐 RDS 的 user/password,走 HTTP Basic) ----
+# ---- database credentials (RDS user / password semantics, sent as HTTP Basic) ----
 variable "db_user" {
   description = "Database user, like the RDS master username"
   type        = string
@@ -47,7 +47,7 @@ variable "db_password" {
   sensitive   = true
 }
 
-# ---- endpoint 的门 ----
+# ---- the endpoint's gate ----
 variable "endpoint_auth" {
   description = <<-EOT
     How the database endpoint (db / db-ro Function URLs) is protected:
@@ -71,7 +71,7 @@ variable "console" {
   default     = true
 }
 
-# ---- demo 业务 API 自己的门(x-auth-token 头),与数据库凭证无关 ----
+# ---- the demo API's own gate (x-auth-token header), unrelated to the database credentials ----
 variable "auth_token" {
   description = "Shared secret for the demo service's own API gate"
   type        = string

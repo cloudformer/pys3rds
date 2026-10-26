@@ -1,4 +1,4 @@
-"""db lambda 的 HTTP 层:输入校验先于一切、事务接口的原子性、只读入口。"""
+"""The server's HTTP layer: validation before anything else, atomic /tx, the read-only endpoint."""
 import base64
 import json
 
@@ -52,10 +52,10 @@ def test_tx_commits_all_or_nothing(db):
     puts = db.puts
     status, data = call("POST", "/api/db/d/tx", {"statements": [
         {"sql": "INSERT INTO t (v) VALUES (?)", "params": ["a"]},
-        {"sql": "INSERT INTO t (v) VALUES (NULL)"},  # 违约
+        {"sql": "INSERT INTO t (v) VALUES (NULL)"},  # violates NOT NULL
     ]})
     assert status == 400
-    assert db.puts == puts  # 没上传
+    assert db.puts == puts  # nothing uploaded
     _, data = call("POST", "/api/db/d/query", {"sql": "SELECT COUNT(*) AS n FROM t"})
     assert data["rows"][0][0] == 0
 
@@ -64,7 +64,7 @@ def test_tx_commits_all_or_nothing(db):
         {"sql": "INSERT INTO t (v) VALUES (?)", "params": ["b"]},
     ]})
     assert status == 200
-    assert db.puts == puts + 1  # 两条一次上传
+    assert db.puts == puts + 1  # two statements, one upload
     assert data["s3"].endswith("+upload")
 
 

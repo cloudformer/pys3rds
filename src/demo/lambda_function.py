@@ -1,11 +1,11 @@
-"""srds demo:示例业务 Lambda。
+"""s3rds demo: a sample business Lambda.
 
-业务服务不直接碰 S3——把 srds db lambda 当作 RDS endpoint,
-通过 s3rds 驱动(零依赖,接口同 pymysql)连过去。
-ECS / EC2 / 本地脚本的接入方式一模一样:pip install s3rds + 四个连接参数。
+The service never touches S3: it treats the s3rds endpoint as an RDS endpoint,
+through the s3rds driver (no dependencies, pymysql-shaped API).
+ECS / EC2 / a local script connect the same way: pip install s3rds + four connection parameters.
 
-GET  /items          列表
-POST /items {text}   插入一条
+GET  /items          list
+POST /items {text}   insert one
 """
 import base64
 import json
@@ -13,10 +13,10 @@ import os
 
 from s3rds import sqlite
 
-AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")  # demo 自己 API 的门,与数据库凭证无关
+AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")  # the demo API's own gate, unrelated to the database credentials
 
-# 连接参数与 RDS 完全同构。未来迁真 RDS:环境变量换成 RDS 的值,
-# `from s3rds import pymysql` → `import pymysql`,下面这几行一个字不改。
+# the connection parameters have the same shape as RDS. Moving to a real RDS: point the env vars at it,
+# `from s3rds import pymysql` -> `import pymysql`, and the lines below do not change.
 DB = sqlite.connect(
     host=os.environ["DB_ENDPOINT"],
     user=os.environ["DB_USER"],
@@ -34,7 +34,7 @@ _initialized = False
 
 
 def _ensure_init():
-    """冷启动后第一次访问前把库和表建好(两步都幂等;失败则下次再试)。"""
+    """Create the database and table before the first request after a cold start (both idempotent; retried next time on failure)."""
     global _initialized
     if not _initialized:
         DB.create_database()
@@ -54,9 +54,9 @@ def _body(event):
     raw = event.get("body") or "{}"
     if event.get("isBase64Encoded"):
         raw = base64.b64decode(raw)
-    data = json.loads(raw)  # 不合法 → ValueError → 400,在碰数据库之前拦下
+    data = json.loads(raw)  # invalid -> ValueError -> 400, before the database is touched
     if not isinstance(data, dict):
-        raise ValueError("请求体必须是 JSON 对象")
+        raise ValueError("request body must be a JSON object")
     return data
 
 

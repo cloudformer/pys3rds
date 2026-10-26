@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>srds console</title>
 <style>
-/* 风格参考 Automation_Delivery_EaC 的 db 页面 */
+/* styling shared with the series console shell */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', sans-serif;
@@ -22,7 +22,7 @@ body {
   box-shadow: 0 20px 60px rgba(0,0,0,0.3);
 }
 h1 { color: #333; margin-bottom: 10px; }
-/* 顶部信息行:Endpoint 固定在前,Database 在后(定宽,切库不抖),退出靠右 */
+/* header: Endpoint first, Database (fixed width, no jitter when switching), sign-out on the right */
 .db-info {
   display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
   margin: 6px 0 24px; font-size: 13px;
@@ -37,10 +37,10 @@ h1 { color: #333; margin-bottom: 10px; }
   padding: 4px 10px; color: #374151; font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-/* 定宽,像 format 的固定列:内容长短变化不影响后面元素的位置 */
+/* fixed width so content length never moves the elements after it */
 #info-db { width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* 输出日志(DataGrip 风格) */
+/* output log (DataGrip style) */
 .log {
   background: #1f2937; color: #d1d5db; border-radius: 8px;
   padding: 10px 14px; margin: 12px 0 0; max-height: 200px; overflow: auto;
@@ -159,7 +159,7 @@ td input {
 .sql-actions { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
 .hint { font-size: 12px; color: #6b7280; }
 
-/* 页内模态框(不用浏览器 prompt,避免被"阻止对话框"机制吞掉) */
+/* in-page modal (browsers suppress prompt() in Lambda URL pages) */
 dialog {
   border: none; border-radius: 10px; padding: 25px;
   box-shadow: 0 20px 60px rgba(0,0,0,.3); min-width: 340px; max-width: 90vw;
@@ -173,29 +173,29 @@ dialog .form-grid { grid-template-columns: 1fr; }
 </head>
 <body>
 <div class="container">
-  <h1>📊 srds 数据库控制台</h1>
+  <h1>📊 s3rds console</h1>
   <div class="db-info">
     <span class="meta"><span class="k">Endpoint</span><span class="chip" id="info-host">-</span></span>
     <span class="meta"><span class="k">Database</span><span class="chip" id="info-db">-</span></span>
-    <button class="btn btn-ghost btn-small" id="logout">退出账号</button>
+    <button class="btn btn-ghost btn-small" id="logout">sign out</button>
   </div>
 
   <div class="controls">
-    <label>库</label><select id="dbs"></select>
-    <button class="btn btn-secondary" id="newdb">＋ 新建库</button>
-    <label>表</label><select id="tables"></select>
-    <button class="btn btn-secondary" id="newtable">＋ 新建表</button>
-    <button class="btn btn-ghost" id="refresh">刷新</button>
+    <label>Database</label><select id="dbs"></select>
+    <button class="btn btn-secondary" id="newdb">＋ New database</button>
+    <label>Table</label><select id="tables"></select>
+    <button class="btn btn-secondary" id="newtable">＋ New table</button>
+    <button class="btn btn-ghost" id="refresh">refresh</button>
   </div>
 
   <div class="sql-section">
-    <div class="section-title">SQL 控制台</div>
-    <textarea id="sql" placeholder="一次一条语句。例:CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL) STRICT"></textarea>
+    <div class="section-title">SQL</div>
+    <textarea id="sql" placeholder="One statement at a time, e.g. CREATE TABLE notes (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL) STRICT"></textarea>
     <div class="sql-actions">
-      <button class="btn btn-primary" id="run">▶ 运行</button>
-      <span class="hint">⌘/Ctrl+Enter 运行;空输入框 = NULL</span>
+      <button class="btn btn-primary" id="run">▶ Run</button>
+      <span class="hint">⌘/Ctrl+Enter runs · an empty field = NULL</span>
       <span style="flex:1"></span>
-      <button class="btn btn-ghost btn-small" id="togglelog">历史</button>
+      <button class="btn btn-ghost btn-small" id="togglelog">history</button>
     </div>
     <div class="log" id="log"></div>
     <div id="sqlout" style="margin-top:12px" hidden><table id="sqlgrid"></table></div>
@@ -209,8 +209,8 @@ dialog .form-grid { grid-template-columns: 1fr; }
     <h3 id="dlgtitle"></h3>
     <div class="form-grid" id="dlgbody"></div>
     <div class="sql-actions">
-      <button class="btn btn-primary" value="ok">确定</button>
-      <button class="btn btn-ghost" value="cancel" formnovalidate>取消</button>
+      <button class="btn btn-primary" value="ok">OK</button>
+      <button class="btn btn-ghost" value="cancel" formnovalidate>Cancel</button>
     </div>
   </form>
 </dialog>
@@ -219,7 +219,7 @@ dialog .form-grid { grid-template-columns: 1fr; }
 const $ = s => document.querySelector(s);
 const state = {db:null, table:null, tables:[], loaded:false, offset:0, limit:50, total:0,
                columns:[], rows:[], structure:[]};
-// 浏览器本地只记两样:登录凭证、上次选中的库/表(数据永远现查)
+// the browser keeps only two things: the credential and the last database/table (data is always fetched)
 const store = {
   get: k => { try { return localStorage.getItem('srds_' + k); } catch(e){ return null; } },
   set: (k, v) => { try { v == null ? localStorage.removeItem('srds_' + k)
@@ -231,7 +231,7 @@ $('#info-host').textContent = location.host;
 
 function saveCred(c){ cred = c; store.set('cred', c || null); }
 
-// 页内模态框:dialog('标题', [{key,label,type,placeholder,value}]) -> {key:值} 或 null(取消)
+// in-page modal: dialog('title', [{key,label,type,placeholder,value}]) -> {key: value} or null (cancelled)
 function dialog(title, fields){
   return new Promise(resolve => {
     $('#dlgtitle').textContent = title;
@@ -255,13 +255,13 @@ function dialog(title, fields){
 }
 
 async function askCred(){
-  const v = await dialog('数据库登录', [
-    {key:'u', label:'用户名', placeholder:'db_user'},
-    {key:'p', label:'密码', type:'password'},
+  const v = await dialog('Sign in', [
+    {key:'u', label:'user', placeholder:'db_user'},
+    {key:'p', label:'password', type:'password'},
   ]);
   if (v) saveCred(v.u + ':' + v.p);
 }
-// ---- 输出日志:每条执行回显 "库> SQL",下一行带时间戳的结果 ----
+// ---- output log: every run echoes "db> SQL", then a timestamped result line ----
 function ts(){
   const d = new Date(), p = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
@@ -270,7 +270,7 @@ function fmtMs(ms){
   ms = Math.max(0, Math.round(ms));
   return ms >= 1000 ? `${Math.floor(ms/1000)} s ${ms%1000} ms` : `${ms} ms`;
 }
-// 一次执行 = 一组(SQL 行 + 结果行)。默认只显示最新一组;「历史」展开全部,最新在上
+// one run = one group (SQL line + result line); only the latest shows by default, "history" expands all, newest first
 const logGroups = [];
 let logExpanded = false;
 function logStart(){
@@ -293,11 +293,11 @@ function renderLog(){
       {className: l.cls || '', textContent: l.text})));
   });
   el.scrollTop = 0;
-  $('#togglelog').textContent = logExpanded ? '只看最新' : `历史 (${logGroups.length})`;
+  $('#togglelog').textContent = logExpanded ? 'latest only' : `history (${logGroups.length})`;
 }
 function logSql(sql){ logStart(); log(`${state.db}> ${sql.replace(/\s+/g, ' ').trim()}`, 'sql'); }
 function msg(t, ok){ if (t) log(`[${ts()}] ${t}`, ok ? 'ok' : 'err'); }
-// total = 浏览器看到的往返;execution = 服务端耗时;fetching = 差值(网络+传输)
+// total = round trip seen by the browser; execution = server time; fetching = the difference (network + transfer)
 function timing(d){
   const total = d._total || 0, exec = d.ms || 0;
   return `in ${fmtMs(total)} (execution: ${fmtMs(exec)}, fetching: ${fmtMs(total - exec)}) · ${d.s3}`;
@@ -309,44 +309,44 @@ function esc(s){ return String(s).replace(/[&<>"]/g,
 function sqlStr(v){ return v === null ? 'NULL' : "'" + String(v).replace(/'/g, "''") + "'"; }
 function friendly(m){
   if (/incomplete input/.test(m))
-    return m + ' ← 语句不完整:建表必须带列定义,如 CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)';
+    return m + ' ← incomplete statement: CREATE TABLE needs column definitions, e.g. CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT)';
   if (/syntax error/.test(m))
-    return m + ' ← SQL 语法错误;注意控制台一次只执行一条语句';
+    return m + ' ← SQL syntax error; the console runs one statement at a time';
   if (/no such table/.test(m))
-    return m + ' ← 表不存在:先建表,或检查选中的库对不对';
+    return m + ' ← no such table: create it first, or check the selected database';
   if (/no such column/.test(m))
-    return m + ' ← 列不存在:可在 SQL 控制台 ALTER TABLE ... ADD COLUMN';
+    return m + ' ← no such column: ALTER TABLE ... ADD COLUMN in the SQL box';
   if (/NOT NULL constraint/.test(m))
-    return m + ' ← 必填列没给值';
+    return m + ' ← a NOT NULL column was left empty';
   if (/unknown datatype/.test(m))
-    return m + ' ← STRICT 表的列类型只能是 INTEGER / REAL / TEXT / BLOB / ANY';
+    return m + ' ← STRICT tables allow only INTEGER / REAL / TEXT / BLOB / ANY';
   if (/FOREIGN KEY constraint/.test(m))
-    return m + ' ← 违反外键:引用的父记录不存在,或父记录还被引用着';
-  if (/只读入口/.test(m))
-    return m + ' ← 这个地址是只读 endpoint,改数据请打开写端点(db_url)的控制台';
-  if (/并发写冲突/.test(m))
-    return m + ' ← 本次写入未生效,刷新后重试';
+    return m + ' ← foreign key violation: the parent row does not exist, or is still referenced';
+  if (/read-only endpoint/.test(m))
+    return m + ' ← this is the read-only endpoint; open the console on the write endpoint (db_url) to change data';
+  if (/write conflict/.test(m))
+    return m + ' ← this write did not land; refresh and retry';
   return m;
 }
 
 async function api(path, opts = {}){
   if (!cred) await askCred();
-  if (!cred) throw new Error('需要先登录（已取消）');
+  if (!cred) throw new Error('sign-in cancelled');
   const t0 = performance.now();
   const r = await fetch(path, Object.assign({}, opts, {
     headers: {'content-type':'application/json', 'authorization': 'Basic ' + btoa(cred)}}));
   let data = {}; try { data = await r.json(); } catch(e) {}
-  if (r.status === 401){ saveCred(''); throw new Error('用户名或密码不对，重试会重新询问'); }
+  if (r.status === 401){ saveCred(''); throw new Error('wrong user or password; the next action asks again'); }
   if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
   data._total = performance.now() - t0;
   return data;
 }
 
-// 库列表、表列表自动加载并恢复上次选中;数据不自动拉,等用户点「加载数据」或切表
+// databases and tables load automatically and restore the last selection; rows load on demand (button or table change)
 async function loadDbs(keep){
   const d = await api('/api/databases');
   const want = keep || store.get('db');
-  $('#dbs').innerHTML = '<option value="">-- 选择库 --</option>'
+  $('#dbs').innerHTML = '<option value="">-- database --</option>'
     + d.databases.map(n => `<option>${esc(n)}</option>`).join('');
   state.db = d.databases.includes(want) ? want : null;
   $('#dbs').value = state.db || '';
@@ -356,7 +356,7 @@ async function loadDbs(keep){
 async function loadTables(keep){
   const wasLoaded = state.loaded && keep && keep === state.table;
   state.table = null; state.tables = []; state.loaded = false; state.offset = 0;
-  $('#tables').innerHTML = '<option value="">-- 选择表 --</option>';
+  $('#tables').innerHTML = '<option value="">-- table --</option>';
   if (state.db){
     const d = await api(`/api/db/${state.db}/tables`);
     state.tables = d.tables;
@@ -366,7 +366,7 @@ async function loadTables(keep){
     $('#tables').value = state.table || '';
     store.set('table:' + state.db, state.table);
   }
-  if (wasLoaded) await loadRows(); else render();  // 之前正看着数据(如 DDL 后)才顺手刷新
+  if (wasLoaded) await loadRows(); else render();  // refresh only if rows were showing (e.g. after DDL)
 }
 async function loadRows(){
   if (!state.table){ render(); return; }
@@ -383,20 +383,20 @@ function render(){
   $('#info-db').textContent = state.db || '-';
   const main = $('#main');
   if (!state.db){
-    main.innerHTML = '<div class="table-section"><div class="empty">从上方选择一个库，或点「＋ 新建库」</div></div>';
+    main.innerHTML = '<div class="table-section"><div class="empty">Pick a database above, or click “＋ New database”</div></div>';
     return;
   }
   if (!state.table){
     main.innerHTML = `<div class="table-section"><div class="empty">${state.tables.length
-      ? '从上方选择一张表'
-      : '这个库还没有表——点「＋ 新建表」开始,或在下方 SQL 控制台写 CREATE TABLE'}</div></div>`;
+      ? 'Pick a table above'
+      : 'No tables yet — click “＋ New table”, or write CREATE TABLE in the SQL box'}</div></div>`;
     return;
   }
   if (!state.loaded){
     main.innerHTML = `<div class="table-section">
       <div class="table-header"><div class="table-name">📋 ${esc(state.table)}</div></div>
-      <div class="empty">数据不自动加载。
-        <button class="btn btn-primary" id="loadbtn" style="margin-left:10px">加载数据</button>
+      <div class="empty">Rows are not loaded automatically.
+        <button class="btn btn-primary" id="loadbtn" style="margin-left:10px">Load rows</button>
       </div></div>`;
     $('#loadbtn').onclick = () => loadRows().catch(e => msg(friendly(e.message)));
     return;
@@ -405,7 +405,7 @@ function render(){
   const pages = Math.max(1, Math.ceil(state.total / state.limit));
   const page = Math.floor(state.offset / state.limit) + 1;
 
-  // 表结构(同 DESCRIBE),每列带 改名/删列 操作
+  // structure (like DESCRIBE), each column with rename / drop
   const structRows = state.structure.map((c, i) => `<tr>
       <td><strong>${esc(c.name)}</strong></td>
       <td>${esc(c.type || '-')}</td>
@@ -414,30 +414,30 @@ function render(){
       <td>${c.dflt_value === null ? '-' : esc(c.dflt_value)}</td>
       <td>${isAutoPk(c) ? 'auto_increment' : '-'}</td>
       <td style="white-space:nowrap">
-        <button class="btn btn-ghost btn-small" onclick="renameCol(${i})">改名</button>
-        ${c.pk ? '' : `<button class="btn-danger" onclick="dropCol(${i})">删列</button>`}
+        <button class="btn btn-ghost btn-small" onclick="renameCol(${i})">rename</button>
+        ${c.pk ? '' : `<button class="btn-danger" onclick="dropCol(${i})">drop</button>`}
       </td>
     </tr>`).join('');
 
-  // 插入表单:按列生成,自增主键跳过
+  // insert form: one field per column, the autoincrement key skipped
   const formFields = state.structure.filter(c => !isAutoPk(c)).map(c => {
     const required = c.notnull && c.dflt_value === null && !c.pk;
     return `<div class="form-field">
       <label>${esc(c.name)}</label>
       <input data-col="${esc(c.name)}" placeholder="${esc(c.type || '')}">
-      <small>${esc(c.type || '')}${required ? ' (必填)' : ''}${c.dflt_value !== null ? ' 默认 ' + esc(c.dflt_value) : ''}</small>
+      <small>${esc(c.type || '')}${required ? ' (required)' : ''}${c.dflt_value !== null ? ' default ' + esc(c.dflt_value) : ''}</small>
     </div>`;
   }).join('');
 
-  // 数据网格
+  // data grid
   const dataHead = '<tr>' + state.columns.map(c => `<th>${esc(c)}</th>`).join('')
-    + (hasRowid ? '<th>操作</th>' : '') + '</tr>';
+    + (hasRowid ? '<th>actions</th>' : '') + '</tr>';
   const dataRows = state.rows.map((r, i) =>
     `<tr data-i="${i}">` + r.map(v => v === null
       ? '<td class="null">NULL</td>' : `<td>${esc(v)}</td>`).join('')
     + (hasRowid
-      ? `<td style="white-space:nowrap"><button class="btn btn-ghost btn-small" onclick="editRow(${i})">编辑</button>
-         <button class="btn-danger" onclick="delRow(${i})">🗑 删除</button></td>` : '')
+      ? `<td style="white-space:nowrap"><button class="btn btn-ghost btn-small" onclick="editRow(${i})">edit</button>
+         <button class="btn-danger" onclick="delRow(${i})">🗑 delete</button></td>` : '')
     + '</tr>').join('');
 
   main.innerHTML = `
@@ -447,33 +447,33 @@ function render(){
       <div class="row-count">${state.total} rows</div>
     </div>
 
-    <div class="section-title">表结构
-      <button class="btn btn-secondary btn-small" id="addcol">＋ 加列</button>
+    <div class="section-title">Structure
+      <button class="btn btn-secondary btn-small" id="addcol">＋ Add column</button>
     </div>
     <table>
-      <thead><tr><th>Field</th><th>Type</th><th>Null</th><th>Key</th><th>Default</th><th>Extra</th><th>操作</th></tr></thead>
+      <thead><tr><th>Field</th><th>Type</th><th>Null</th><th>Key</th><th>Default</th><th>Extra</th><th>actions</th></tr></thead>
       <tbody>${structRows}</tbody>
     </table>
 
     <div class="add-form">
-      <h3>➕ 插入一行到 ${esc(state.table)}</h3>
+      <h3>➕ Insert a row into ${esc(state.table)}</h3>
       <div class="form-grid" id="addgrid">${formFields ||
-        '<small style="color:#6b7280">只有自增主键列,直接点插入即可</small>'}</div>
-      <button class="btn btn-primary" id="addrow">插入</button>
-      <small class="hint" style="margin-left:10px">留空的列走默认值/NULL</small>
+        '<small style="color:#6b7280">only the autoincrement key — just click Insert</small>'}</div>
+      <button class="btn btn-primary" id="addrow">Insert</button>
+      <small class="hint" style="margin-left:10px">empty fields take the default / NULL</small>
     </div>
 
-    <div class="section-title">数据（第 ${page} / ${pages} 页）
-      ${state.ms !== undefined ? `<span class="hint">本次 ${state.ms}ms · ${state.s3}</span>` : ''}
+    <div class="section-title">Rows (page ${page} / ${pages})
+      ${state.ms !== undefined ? `<span class="hint">${state.ms} ms · ${state.s3}</span>` : ''}
     </div>
     ${state.rows.length
       ? `<table id="grid"><thead>${dataHead}</thead><tbody>${dataRows}</tbody></table>`
-      : '<div class="empty">表里还没有数据，用上面的表单插入第一行</div>'}
+      : '<div class="empty">No rows yet — insert the first one with the form above</div>'}
 
     <div class="pagination">
-      <button id="prev" ${state.offset <= 0 ? 'disabled' : ''}>← 上一页</button>
+      <button id="prev" ${state.offset <= 0 ? 'disabled' : ''}>← prev</button>
       <span class="current">${page} / ${pages}</span>
-      <button id="next" ${state.offset + state.limit >= state.total ? 'disabled' : ''}>下一页 →</button>
+      <button id="next" ${state.offset + state.limit >= state.total ? 'disabled' : ''}>next →</button>
     </div>
   </div>`;
 
@@ -509,22 +509,22 @@ async function addRow(){
 }
 
 async function addCol(){
-  const v = await dialog('加列', [{key:'spec', label:'列定义（列名 类型 [约束]）,类型:INTEGER/REAL/TEXT/BLOB',
-    placeholder:'如 title TEXT NOT NULL / price REAL DEFAULT 0'}]);
+  const v = await dialog('Add column', [{key:'spec', label:'column definition (name type [constraints]); types: INTEGER / REAL / TEXT / BLOB',
+    placeholder:'e.g. title TEXT NOT NULL / price REAL DEFAULT 0'}]);
   if (!v || !v.spec) return;
   runWrite(`ALTER TABLE "${state.table}" ADD COLUMN ${v.spec}`);
 }
 window.renameCol = async function(i){
   const col = state.structure[i].name;
-  const v = await dialog(`列「${col}」改名`, [{key:'name', label:'新列名', value: col}]);
+  const v = await dialog(`Rename column ${col}`, [{key:'name', label:'new name', value: col}]);
   const nv = v && v.name;
   if (!nv || nv === col) return;
-  if (!/^[A-Za-z0-9_-]+$/.test(nv)){ msg('列名只能是字母数字 - _'); return; }
+  if (!/^[A-Za-z0-9_-]+$/.test(nv)){ msg('column names: letters, digits, - and _ only'); return; }
   await runWrite(`ALTER TABLE "${state.table}" RENAME COLUMN "${col}" TO "${nv}"`);
 };
 window.dropCol = async function(i){
   const col = state.structure[i].name;
-  if (!await dialog(`删除列「${col}」？该列所有数据会一起删掉`, [])) return;
+  if (!await dialog(`Drop column ${col}? Its data goes with it`, [])) return;
   await runWrite(`ALTER TABLE "${state.table}" DROP COLUMN "${col}"`);
 };
 
@@ -535,8 +535,8 @@ window.editRow = function(i){
     ? `<td>${esc(row[0])}</td>`
     : `<td><input data-j="${j}" value="${row[j] === null ? '' : esc(row[j])}" placeholder="NULL"></td>`
   ).join('') + `<td style="white-space:nowrap">
-      <button class="btn btn-primary btn-small" onclick="saveRow(${i})">保存</button>
-      <button class="btn btn-ghost btn-small" onclick="loadRows()">取消</button></td>`;
+      <button class="btn btn-primary btn-small" onclick="saveRow(${i})">save</button>
+      <button class="btn btn-ghost btn-small" onclick="loadRows()">cancel</button></td>`;
 };
 window.saveRow = async function(i){
   const tr = document.querySelector(`#grid tr[data-i="${i}"]`);
@@ -551,46 +551,46 @@ window.saveRow = async function(i){
   await runWrite(`UPDATE "${state.table}" SET ${sets.join(', ')} WHERE rowid = ${state.rows[i][0]}`);
 };
 window.delRow = async function(i){
-  if (!await dialog('确认删除这一行？', [])) return;
+  if (!await dialog('Delete this row?', [])) return;
   await runWrite(`DELETE FROM "${state.table}" WHERE rowid = ${state.rows[i][0]}`);
 };
 
 $('#refresh').onclick = () => loadDbs(state.db).catch(e => msg(friendly(e.message)));
 $('#dbs').onchange = e => { state.db = e.target.value || null; store.set('db', state.db);
   loadTables().catch(err => msg(friendly(err.message))); };
-$('#tables').onchange = e => {  // 用户亲手选的表 → 这时才拉数据
+$('#tables').onchange = e => {  // a table picked by the user: load its rows now
   state.table = e.target.value || null; state.offset = 0; state.loaded = false;
   store.set('table:' + state.db, state.table);
   loadRows().catch(err => msg(friendly(err.message))); };
 $('#newdb').onclick = async () => {
-  const v = await dialog('新建库', [{key:'name', label:'库名（字母数字 - _）'}]);
+  const v = await dialog('New database', [{key:'name', label:'name (letters, digits, - _)'}]);
   const name = v && v.name;
   if (!name) return;
   try {
     await api('/api/databases', {method:'POST', body: JSON.stringify({name})});
-    msg('✓ 已创建数据库 ' + name, true);
+    msg('✓ created database ' + name, true);
     await loadDbs(name);
   } catch(e){ msg(friendly(e.message)); }
 };
 $('#newtable').onclick = async () => {
-  if (!state.db){ msg('先选择一个库'); return; }
-  const v = await dialog('新建表（自带自增 id 主键列）', [{key:'name', label:'表名（字母数字 - _）'}]);
+  if (!state.db){ msg('pick a database first'); return; }
+  const v = await dialog('New table (with an autoincrement id column)', [{key:'name', label:'name (letters, digits, - _)'}]);
   const name = v && v.name;
   if (!name) return;
-  if (!/^[A-Za-z0-9_-]+$/.test(name)){ msg('表名只能是字母数字 - _'); return; }
+  if (!/^[A-Za-z0-9_-]+$/.test(name)){ msg('table names: letters, digits, - and _ only'); return; }
   try {
     await api(`/api/db/${state.db}/query`, {method:'POST', body: JSON.stringify(
       {sql: `CREATE TABLE "${name}" (id INTEGER PRIMARY KEY AUTOINCREMENT) STRICT`})});
-    msg(`✓ 已建表 ${name}（STRICT 严格类型,自带自增 id 列），用「＋ 加列」加字段`, true);
+    msg(`✓ created table ${name} (STRICT, with an autoincrement id); add fields with “＋ Add column”`, true);
     await loadTables(name);
-    await loadRows();  // 刚建的表直接打开
+    await loadRows();  // open the table just created
   } catch(e){ msg(friendly(e.message)); }
 };
-$('#logout').onclick = () => { saveCred(''); msg('已退出，下次操作会重新询问用户名/密码', true); };
+$('#logout').onclick = () => { saveCred(''); msg('signed out; the next action asks for user / password again', true); };
 
 async function runSql(){
   const sql = $('#sql').value.trim();
-  if (!state.db){ msg('先选择一个库'); return; }
+  if (!state.db){ msg('pick a database first'); return; }
   if (!sql) return;
   logSql(sql);
   try {

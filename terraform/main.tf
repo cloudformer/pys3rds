@@ -1,15 +1,15 @@
 data "aws_caller_identity" "me" {}
 
 locals {
-  prefix = "db/" # 桶内目录固定,所有环境一致:s3://<bucket>/db/<db>.sqlite
+  prefix = "db/" # fixed layout in every environment: s3://<bucket>/db/<db>.sqlite
   role   = "${var.name}-lambda-role"
 }
 
-# ---------------- S3:数据库文件都在这一个私有 bucket ----------------
+# ---------------- S3: every database file lives in this one private bucket ----------------
 resource "aws_s3_bucket" "db" {
-  # S3 桶名全局唯一,被占了改这里的后缀
+  # S3 bucket names are global; change the suffix if this one is taken
   bucket        = "${var.env}-srds-db-2026"
-  force_destroy = true # 自己玩:destroy 连数据一起删;有要留的数据先 aws s3 cp 备份
+  force_destroy = true # destroy deletes the data too; copy out anything you want to keep first
 }
 
 resource "aws_s3_bucket_public_access_block" "db" {
@@ -20,7 +20,7 @@ resource "aws_s3_bucket_public_access_block" "db" {
   restrict_public_buckets = true
 }
 
-# ---------------- IAM:两个 lambda 共用一个 role,只放行 <env>/*.sqlite ----------------
+# ---------------- IAM: one role for the lambdas, scoped to db/*.sqlite ----------------
 resource "aws_iam_role" "lambda" {
   name = local.role
   assume_role_policy = jsonencode({
@@ -59,7 +59,7 @@ resource "aws_iam_role_policy" "lambda" {
   })
 }
 
-# ---------------- 打包:两个 lambda 完全独立,各自一个 zip ----------------
+# ---------------- packaging: independent zips ----------------
 data "archive_file" "db_code" {
   type        = "zip"
   source_dir  = "${path.module}/../src/db"
@@ -67,7 +67,7 @@ data "archive_file" "db_code" {
   output_path = "${path.module}/.build/db.zip"
 }
 
-# demo 的 zip = 业务代码 + s3rds 驱动包;驱动直接取 client/ 下那一份(pip 包的源码),不另拷
+# the demo zip = business code + the s3rds driver taken straight from client/ (the pip package source)
 data "archive_file" "demo_code" {
   type        = "zip"
   output_path = "${path.module}/.build/demo.zip"
@@ -84,7 +84,7 @@ data "archive_file" "demo_code" {
   }
 }
 
-# ---------------- Lambda 1:通用 serverless 数据库(DataGrip 风格 web 控制台) ----------------
+# ---------------- Lambda 1: the database (DataGrip-style web console) ----------------
 resource "aws_lambda_function" "db" {
   function_name    = "${var.name}-db-lambda"
   role             = aws_iam_role.lambda.arn
@@ -95,7 +95,7 @@ resource "aws_lambda_function" "db" {
   timeout          = 15
   memory_size      = 256
 
-  # 全局单写者:物理上杜绝并发写冲突(代码里的 ETag CAS 是第二道保险)
+  # one writer globally: no concurrent writes by construction (the ETag CAS in the code is the second guard)
   reserved_concurrent_executions = 1
 
   environment {
@@ -109,8 +109,8 @@ resource "aws_lambda_function" "db" {
   }
 }
 
-# ---------------- Lambda 1b:只读入口(同一份代码+READONLY=1,读不限并发) ----------------
-# 不是"副本":和写者读同一份 S3 文件,零复制零延迟,只是第二个入口。
+# ---------------- Lambda 1b: read-only endpoint (same code + READONLY=1, unlimited read concurrency) ----------------
+# not a replica: it reads the same S3 file as the writer, zero copy, zero lag; just a second entrance.
 resource "aws_lambda_function" "db_ro" {
   function_name    = "${var.name}-db-ro-lambda"
   role             = aws_iam_role.lambda.arn
@@ -120,7 +120,7 @@ resource "aws_lambda_function" "db_ro" {
   source_code_hash = data.archive_file.db_code.output_base64sha256
   timeout          = 15
   memory_size      = 256
-  # 不设 reserved_concurrency:读互不冲突,随并发横向扩
+  # no reserved concurrency: reads do not conflict, scale with demand
 
   environment {
     variables = {
@@ -162,7 +162,7 @@ resource "aws_lambda_permission" "db_ro_url_invoke" {
   invoked_via_function_url = true
 }
 
-# ---------------- Lambda 2:业务 lambda 示例(把 db lambda 当 RDS endpoint 用) ----------------
+# ---------------- Lambda 2: the demo service (uses the database endpoint like RDS) ----------------
 resource "aws_lambda_function" "demo" {
   function_name    = "${var.name}-demo-lambda"
   role             = aws_iam_role.lambda.arn
@@ -177,13 +177,13 @@ resource "aws_lambda_function" "demo" {
 
   environment {
     variables = {
-      # 连接参数与 RDS 完全同构:endpoint / dbname / user / password。
-      # 未来迁真 RDS:这四个换成 RDS 的值,业务代码不动,只换驱动。
+      # the same parameters as RDS: endpoint / dbname / user / password.
+      # moving to a real RDS: point these four at it, swap the driver, the business code stays.
       DB_ENDPOINT = aws_lambda_function_url.db.function_url
       DB_NAME     = "demo"
       DB_USER     = var.db_user
       DB_PASSWORD = var.db_password
-      AUTH_TOKEN  = var.auth_token # demo 自己 API 的门,与数据库凭证无关
+      AUTH_TOKEN  = var.auth_token # the demo API's own gate, unrelated to the database credentials
     }
   }
 }

@@ -4,6 +4,6 @@ state/
 *.tfstate
 *.tfstate.backup
 .terraform.lock.hcl
-# 真实配置含密码,只提交 example.json
+# real var files carry passwords; only example.json is committed
 *.json
 !example.json

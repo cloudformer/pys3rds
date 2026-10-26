@@ -1,4 +1,4 @@
-"""存储引擎的正确性承诺,每条一个测试。"""
+"""The storage engine's guarantees, one test each."""
 import os
 import sqlite3
 
@@ -24,7 +24,7 @@ def count(db):
 
 
 def other_writer_bytes(fake_s3, bucket, extra_value):
-    """模拟"别人"在 S3 上写了新版本:拿当前文件改一下再放回去。"""
+    """Simulate another writer: take the current file, change it, put it back."""
     path = "/tmp/other-writer.sqlite"
     with open(path, "wb") as f:
         f.write(fake_s3.objects[KEY])
@@ -37,7 +37,7 @@ def other_writer_bytes(fake_s3, bucket, extra_value):
     os.remove(path)
 
 
-# ---- 只有真写了才上传 ----
+# ---- upload only when data really changed ----
 
 def test_select_does_not_upload(fake_s3, bucket):
     db = make(bucket, fake_s3)
@@ -57,7 +57,7 @@ def test_insert_uploads_once(fake_s3, bucket):
     assert count(db) == 1
 
 
-# ---- 原子性:失败就回到执行前 ----
+# ---- atomicity: a failure leaves everything as before ----
 
 def test_failed_statement_rolls_back_and_skips_upload(fake_s3, bucket):
     db = make(bucket, fake_s3)
@@ -65,12 +65,12 @@ def test_failed_statement_rolls_back_and_skips_upload(fake_s3, bucket):
 
     def fn(c):
         c.execute("INSERT INTO t (v) VALUES ('ok')")
-        c.execute("INSERT INTO t (v) VALUES (NULL)")  # NOT NULL 违约
+        c.execute("INSERT INTO t (v) VALUES (NULL)")  # violates NOT NULL
 
     with pytest.raises(sqlite3.IntegrityError):
         db.run(fn)
-    assert fake_s3.puts == puts            # S3 没动
-    assert count(db) == 0                  # 第一条也回滚了
+    assert fake_s3.puts == puts            # S3 untouched
+    assert count(db) == 0                  # the first statement rolled back too
 
 
 def test_ddl_is_transactional(fake_s3, bucket):
@@ -87,7 +87,7 @@ def test_ddl_is_transactional(fake_s3, bucket):
     assert "u" not in tables
 
 
-# ---- 并发写:CAS 重放,绝不覆盖别人 ----
+# ---- concurrent writes: CAS replay, never overwrite the other writer ----
 
 def test_conflict_replays_on_fresh_copy(fake_s3, bucket):
     db = make(bucket, fake_s3)
@@ -95,7 +95,7 @@ def test_conflict_replays_on_fresh_copy(fake_s3, bucket):
     real_put = fake_s3.put_object
 
     def put_with_intruder(**kw):
-        if not calls:  # 第一次上传前,别人先写了
+        if not calls:  # someone else wrote before our first upload
             calls.append("intruder")
             other_writer_bytes(fake_s3, bucket, "theirs")
         return real_put(**kw)
@@ -103,9 +103,9 @@ def test_conflict_replays_on_fresh_copy(fake_s3, bucket):
     fake_s3.put_object = put_with_intruder
     runs = []
     db.run(lambda c: (runs.append(1), c.execute("INSERT INTO t (v) VALUES ('mine')")))
-    assert len(runs) == 2  # fn 被重放了一次
+    assert len(runs) == 2  # fn was replayed once
     values = sorted(db.read(lambda c: [r[0] for r in c.execute("SELECT v FROM t")]))
-    assert values == ["mine", "theirs"]  # 两边的写都在
+    assert values == ["mine", "theirs"]  # both writes survived
 
 
 def test_conflict_exhausted_fails_clean(fake_s3, bucket):
@@ -121,10 +121,10 @@ def test_conflict_exhausted_fails_clean(fake_s3, bucket):
         db.run(lambda c: c.execute("INSERT INTO t (v) VALUES ('mine')"))
     fake_s3.put_object = real_put
     values = db.read(lambda c: [r[0] for r in c.execute("SELECT v FROM t")])
-    assert "mine" not in values  # 我的写入干净地没发生,读到的是 S3 真相
+    assert "mine" not in values  # my write cleanly did not happen; what we read is S3's truth
 
 
-# ---- 上传失败不留幽灵数据 ----
+# ---- a failed upload leaves no ghost data ----
 
 def test_upload_failure_invalidates_cache(fake_s3, bucket):
     db = make(bucket, fake_s3)
@@ -137,22 +137,22 @@ def test_upload_failure_invalidates_cache(fake_s3, bucket):
     with pytest.raises(ClientError):
         db.run(lambda c: c.execute("INSERT INTO t (v) VALUES ('ghost')"))
     fake_s3.put_object = real_put
-    assert count(db) == 0  # 本地那份带 ghost 的副本被作废,重新拉了 S3 的
+    assert count(db) == 0  # the local copy with the ghost row was dropped and S3's re-downloaded
 
 
-# ---- 下载时清掉残留日志 ----
+# ---- stale journals are removed on download ----
 
 def test_download_removes_stale_journal(fake_s3, bucket):
     db = make(bucket, fake_s3)
     journal = db.local + "-journal"
     with open(journal, "wb") as f:
         f.write(b"stale hot journal")
-    SqliteS3._etags.clear()  # 模拟进程重启
+    SqliteS3._etags.clear()  # simulate a process restart
     assert count(SqliteS3(bucket, KEY)) == 0
     assert not os.path.exists(journal)
 
 
-# ---- 只读连接真的只读 ----
+# ---- the read-only connection is really read-only ----
 
 def test_read_refuses_writes(fake_s3, bucket):
     db = make(bucket, fake_s3)
@@ -160,7 +160,7 @@ def test_read_refuses_writes(fake_s3, bucket):
         db.read(lambda c: c.execute("INSERT INTO t (v) VALUES ('x')"))
 
 
-# ---- 外键生效 ----
+# ---- foreign keys are enforced ----
 
 def test_foreign_keys_enforced(fake_s3, bucket):
     db = make(bucket, fake_s3)
@@ -170,7 +170,7 @@ def test_foreign_keys_enforced(fake_s3, bucket):
         db.run(lambda c: c.execute("INSERT INTO child (t_id) VALUES (999)"))
 
 
-# ---- 缓存命中不重复下载 ----
+# ---- a cache hit does not download again ----
 
 def test_cache_hit_skips_download(fake_s3, bucket):
     db = make(bucket, fake_s3)
@@ -178,7 +178,7 @@ def test_cache_hit_skips_download(fake_s3, bucket):
     assert db.stats["downloaded"] is False
     other_writer_bytes(fake_s3, bucket, "x")
     assert count(db) == 1
-    assert db.stats["downloaded"] is True  # S3 变了才重拉
+    assert db.stats["downloaded"] is True  # re-downloaded only because S3 changed
 
 
 def test_create_database_refuses_overwrite(fake_s3, bucket):

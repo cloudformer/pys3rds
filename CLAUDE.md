@@ -42,8 +42,9 @@ s3rds (github.com/cloudformer/s3rds) is the reference implementation; when in do
    rather than duplicate a write") each get one line in the README and a test.
 9. **Release = tag.** `git tag vX.Y.Z && git push --tags` runs tests, builds `client/`, publishes to PyPI via
    trusted publishing; the tag must equal the version in `client/pyproject.toml`. CHANGELOG per release.
-10. **Docs in English and Chinese**, same section order as the template README; the series footer links to
-    the topic page and SERIES.md; the series table lives only in the template repository.
+10. **English everywhere except README.zh.md.** UI text, code, comments, commit messages, CHANGELOG, TASKS —
+    all English; the only Chinese file is README.zh.md (same section order as README.md). The series footer
+    links to the topic page; the series table lives only in the template repository.
 
 ## How we work
 

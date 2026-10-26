@@ -1,19 +1,19 @@
-"""srds db:通用 serverless 数据库(SQL over HTTP + SQLite on S3)。
+"""s3rds server: a serverless database (SQL over HTTP, SQLite on S3).
 
-GET  /                                      index.html(web 控制台)
-GET  /api/databases                         列库
-POST /api/databases {name}                  建库
-GET  /api/db/{db}/tables                    列表
-GET  /api/db/{db}/table/{t}?limit&offset    浏览行(带 rowid 和表结构)
-POST /api/db/{db}/query {sql, params?}      执行单条 SQL(可参数化)
+GET  /                                      index.html (web console)
+GET  /api/databases                         list databases
+POST /api/databases {name}                  create a database
+GET  /api/db/{db}/tables                    list tables
+GET  /api/db/{db}/table/{t}?limit&offset    browse rows (with rowid and structure)
+POST /api/db/{db}/query {sql, params?}      run one SQL statement (parameters allowed)
 POST /api/db/{db}/tx {statements:[{sql,params?},...]}
-                                            多条 SQL 在一个事务里:全成才提交落盘,任一失败整体回滚
+                                            several statements in one transaction: all commit or none
 
-读写分离由入口决定,不猜 SQL:
-  写端点(默认)        /query 走 run():SQLite 判定真改了数据才回传 S3
-  只读端点 READONLY=1  一切以 mode=ro 打开,写会被 SQLite 拒绝 → 403
-鉴权:HTTP Basic,语义对齐 RDS 的 user/password。
-所有 JSON 响应都带 ms(本次服务端耗时);读写接口还带 s3(cache-hit/download/+upload)。
+Read / write is decided by the endpoint, never by guessing the SQL:
+  write endpoint (default)   /query goes through run(): SQLite decides whether data changed, only then S3 is written
+  read-only endpoint READONLY=1   everything opens mode=ro; a write is refused by SQLite -> 403
+Auth: HTTP Basic, the same meaning as RDS user / password.
+Every JSON reply carries ms (server time); data calls also carry s3 (cache-hit / download / +upload).
 """
 import base64
 import hmac
@@ -35,18 +35,18 @@ READONLY = os.environ.get("READONLY") == "1"
 with open(os.path.join(os.path.dirname(__file__), "index.html"), encoding="utf-8") as f:
     INDEX_HTML = f.read()
 
-NAME = r"[A-Za-z0-9_-]{1,64}"  # 库名/表名共用的合法模式
+NAME = r"[A-Za-z0-9_-]{1,64}"  # valid database / table names
 NAME_RE = re.compile(NAME + r"$")
-MAX_ROWS = 500           # 控制台 browse 单页行数上限(UI 习惯,与驱动无关)
-PAGE_BYTES = 4 * 1024 * 1024  # /query 结果单页字节上限,留足 Lambda 6MB 响应余量
+MAX_ROWS = 500           # console browse page size (UI only, not the driver)
+PAGE_BYTES = 4 * 1024 * 1024  # /query page size in bytes, well under Lambda's 6 MB response limit
 
 
 class BadRequest(Exception):
     pass
 
 
-# ---------------- 值的编码:JSON 之外的类型 ----------------
-# 二进制:{"$b": base64} 双向;类型标记(仅当请求带 types:true):按列的声明类型,
+# ---------------- value encoding: what JSON cannot carry ----------------
+# binary: {"$b": base64} both ways; type markers (only when the request says types:true) by declared column type:
 # DATETIME/TIMESTAMP → {"$dt": text}, DATE → {"$d": text}, TIME → {"$t": text}, DECIMAL/NUMERIC → {"$n": text}
 
 def _decode_param(v):
@@ -71,10 +71,10 @@ class Forbidden(Exception):
 
 
 class VersionChanged(Exception):
-    """翻页时数据库已被写入:上一页和下一页不是同一个版本,拒绝混着返回。"""
+    """The database changed while paging: two pages would be two versions, so refuse to mix them."""
 
 
-# ---------------- 基础工具 ----------------
+# ---------------- shared helpers ----------------
 
 def _json(status, data):
     return {
@@ -85,16 +85,16 @@ def _json(status, data):
 
 
 def _body(event):
-    """解析 JSON 请求体;不合法直接 400,不碰任何数据。"""
+    """The JSON request body; 400 before touching any data when it is invalid."""
     raw = event.get("body") or "{}"
     try:
         if event.get("isBase64Encoded"):
             raw = base64.b64decode(raw)
         data = json.loads(raw)
     except ValueError:
-        raise BadRequest("请求体不是合法 JSON") from None
+        raise BadRequest("request body is not valid JSON") from None
     if not isinstance(data, dict):
-        raise BadRequest("请求体必须是 JSON 对象")
+        raise BadRequest("request body must be a JSON object")
     return data
 
 
@@ -105,12 +105,12 @@ def _int(qs, key, default, lo, hi):
     try:
         value = int(raw)
     except ValueError:
-        raise BadRequest(f"{key} 必须是整数") from None
+        raise BadRequest(f"{key} must be an integer") from None
     return max(lo, min(value, hi))
 
 
 def _authed(event):
-    """HTTP Basic;恒定时间比较。没配 DB_USER = 不设防(别这么用)。"""
+    """HTTP Basic, constant-time compare. No DB_USER configured = no auth (do not do that)."""
     if not DB_USER:
         return True
     auth = (event.get("headers") or {}).get("authorization", "")
@@ -134,7 +134,7 @@ def _s3_tag(db):
             + ("+upload" if db.stats["uploaded"] else ""))
 
 
-# ---------------- 各接口:返回 dict(200) 或 (status, dict) ----------------
+# ---------------- routes: return a dict (200) or (status, dict) ----------------
 
 def list_dbs(event):
     return {"databases": list_databases(BUCKET, PREFIX)}
@@ -142,14 +142,14 @@ def list_dbs(event):
 
 def create_db(event):
     if READONLY:
-        raise Forbidden("只读入口不能建库,请走写端点")
+        raise Forbidden("the read-only endpoint cannot create databases; use the write endpoint")
     name = (_body(event).get("name") or "").strip()
     if not NAME_RE.fullmatch(name):
-        raise BadRequest("库名只能是字母数字 - _,最长 64")
+        raise BadRequest("database names: letters, digits, - and _ only, up to 64 characters")
     try:
         create_database(BUCKET, f"{PREFIX}{name}.sqlite")
     except DatabaseExists:
-        return 409, {"error": f"库已存在: {name}"}
+        return 409, {"error": f"database already exists: {name}"}
     return 201, {"created": name}
 
 
@@ -168,20 +168,20 @@ def browse(event, db, table):
     def fn(c):
         names = {r["name"] for r in c.execute(
             "SELECT name FROM sqlite_master WHERE type='table'")}
-        if table not in names:  # 表名白名单,防注入
+        if table not in names:  # table names come from the catalogue, never from the request
             raise sqlite3.OperationalError(f"no such table: {table}")
         total = c.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]
         try:
             cur = c.execute(
                 f'SELECT rowid AS _rowid_, * FROM "{table}" LIMIT ? OFFSET ?',
                 (limit, offset))
-        except sqlite3.OperationalError:  # WITHOUT ROWID 表:退化为只读浏览
+        except sqlite3.OperationalError:  # WITHOUT ROWID table: read-only browsing
             cur = c.execute(f'SELECT * FROM "{table}" LIMIT ? OFFSET ?', (limit, offset))
         return {
             "columns": [d[0] for d in cur.description],
             "rows": [list(r) for r in cur.fetchall()],
             "total": total, "limit": limit, "offset": offset,
-            # 表结构(同 MySQL 的 DESCRIBE):name/type/notnull/dflt_value/pk
+            # structure (like MySQL's DESCRIBE): name / type / notnull / dflt_value / pk
             "structure": [dict(r) for r in c.execute(f'PRAGMA table_info("{table}")')],
         }
 
@@ -191,21 +191,21 @@ def browse(event, db, table):
     return result
 
 
-def _prepare(stmt, where="请求"):
-    """校验一条 {sql, params} → (sql, params);不合法直接 400,不碰数据。"""
+def _prepare(stmt, where="request"):
+    """Validate one {sql, params} -> (sql, params); 400 before touching data when invalid."""
     if not isinstance(stmt, dict):
-        raise BadRequest(f"{where} 必须是对象 {{sql, params?}}")
+        raise BadRequest(f"{where} must be an object {{sql, params?}}")
     sql = (stmt.get("sql") or "").strip().rstrip(";")
     params = stmt.get("params") or []
     if not sql:
-        raise BadRequest(f"{where}.sql 不能为空")
+        raise BadRequest(f"{where}.sql must not be empty")
     if not isinstance(params, list):
-        raise BadRequest(f"{where}.params 必须是数组")
+        raise BadRequest(f"{where}.params must be a list")
     return sql, params
 
 
 def _exec_one(c, sql, params, offset=0):
-    """执行一条;结果集按字节分页:跳过 offset 行后最多装 PAGE_BYTES,还有剩就 has_more。"""
+    """Run one statement; the result is paged by bytes: skip offset rows, fill up to PAGE_BYTES, has_more if rows remain."""
     cur = c.execute(sql, [_decode_param(p) for p in params])
     if not cur.description:
         return {"columns": [], "rows": [], "rowcount": cur.rowcount, "lastrowid": cur.lastrowid}
@@ -228,14 +228,14 @@ def _exec_one(c, sql, params, offset=0):
 
 
 def _run(inst, fn, typed=False):
-    """按入口选 read/run,附带耗时和 S3 动作;只读入口上的写被 SQLite 拒绝 → 403。"""
+    """read() or run() by endpoint, with timing and the S3 action; a write on the read-only endpoint is refused by SQLite -> 403."""
     t0 = time.perf_counter()
     detect = sqlite3.PARSE_DECLTYPES if typed else 0
     try:
         result = inst.read(fn, detect) if READONLY else inst.run(fn, detect)
     except sqlite3.OperationalError as e:
         if READONLY and "readonly" in str(e):
-            raise Forbidden("这是只读入口,写操作请走写端点") from None
+            raise Forbidden("this is the read-only endpoint; send writes to the write endpoint") from None
         raise
     result["ms"] = round((time.perf_counter() - t0) * 1000, 1)
     result["s3"] = _s3_tag(inst)
@@ -248,8 +248,8 @@ def _token(sql, params, offset, etag, typed):
 
 
 def query(event, db):
-    """一条 SQL。结果超过 PAGE_BYTES 时带 next_token;下一页只传 next_token。
-    token 里带着发页时的数据库版本(ETag),翻页时版本变了 → 409 VersionChanged,客户端从头重跑。"""
+    """One SQL statement. A result over PAGE_BYTES carries next_token; the next page sends only next_token.
+    The token carries the database version (ETag) at the time of the page; a changed version -> 409 VersionChanged, the client re-runs."""
     body = _body(event)
     token = body.get("next_token")
     if token:
@@ -275,24 +275,24 @@ def query(event, db):
     next_offset = result.pop("next_offset", None)
     if has_more:
         result["next_token"] = _token(sql, params, next_offset, inst.etag, typed)
-    result["truncated"] = has_more  # 0.1.0 客户端看的字段;新客户端见到 truncated 且无 next_token 会报错
+    result["truncated"] = has_more  # read by 0.1.0 clients; a new client raises on truncated without next_token
     return result
 
 
 def tx(event, db):
-    """多条语句一个事务。SqliteS3.run 本身就是一个 BEGIN/COMMIT,
-    这里只是把 fn 换成"顺序执行多条";任一条抛错 → 整体 ROLLBACK,S3 不动。"""
+    """Several statements, one transaction. SqliteS3.run is already one BEGIN/COMMIT;
+    fn just runs them in order; any error -> ROLLBACK of everything, S3 untouched."""
     body = _body(event)
     stmts = body.get("statements")
     if not isinstance(stmts, list) or not stmts:
-        raise BadRequest("statements 必须是非空数组:[{sql, params?}, ...]")
+        raise BadRequest("statements must be a non-empty list: [{sql, params?}, ...]")
     prepared = [_prepare(s, f"statements[{i}]") for i, s in enumerate(stmts)]
 
     def fn(c):
         results = []
         for i, (sql, params) in enumerate(prepared):
             r = _exec_one(c, sql, params)
-            if r.pop("has_more", False):  # 事务里不分页:结果超页大小就明确报错
+            if r.pop("has_more", False):  # no paging inside a transaction: an oversized result is an explicit error
                 raise BadRequest(f"statements[{i}] result exceeds {PAGE_BYTES} bytes; run it as a plain query")
             r.pop("next_offset", None)
             results.append(r)
@@ -311,7 +311,7 @@ ROUTES = [
 ]
 
 
-# ---------------- 入口 ----------------
+# ---------------- entry point ----------------
 
 def lambda_handler(event, context):
     http = (event.get("requestContext") or {}).get("http") or {}

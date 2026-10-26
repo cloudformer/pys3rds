@@ -1,7 +1,7 @@
-"""测试公共设施:把 src/ 加进 import 路径,提供一个内存版假 S3。
+"""Test setup: src/ on the import path, an in-memory fake S3.
 
-假 S3 实现了 s3_sqlite 用到的全部语义:ETag(=MD5)、HEAD 404、
-PUT 的 If-Match / If-None-Match 条件写,以及 list 分页器。
+The fake S3 implements everything s3_sqlite uses: ETag (= MD5), HEAD 404,
+conditional PUT with If-Match / If-None-Match, and the list paginator.
 """
 import hashlib
 import io
@@ -15,7 +15,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src", "db"))
 sys.path.insert(0, os.path.join(ROOT, "client"))
 
-# lambda_function 在 import 时就读这些环境变量
+# lambda_function reads these at import time
 os.environ.setdefault("AWS_DEFAULT_REGION", "us-east-2")
 os.environ.setdefault("DB_BUCKET", "test-bucket")
 os.environ.setdefault("DB_PREFIX", "db/")
@@ -84,5 +84,5 @@ def fake_s3(monkeypatch):
 
 @pytest.fixture
 def bucket():
-    """每个测试独立桶名 → /tmp 缓存路径不同,测试之间互不污染。"""
+    """A bucket name per test -> a different /tmp cache path, so tests never share state."""
     return f"t-{uuid.uuid4().hex}"

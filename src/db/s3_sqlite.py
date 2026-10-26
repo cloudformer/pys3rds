@@ -1,13 +1,13 @@
-"""SQLite-on-S3:把 S3 上的一个 .sqlite 文件当作一个数据库实例来用。
+"""SQLite on S3: one .sqlite object on S3 used as one database instance.
 
-read(fn):  以 mode=ro 打开本地缓存,SQLite 自己保证写不进去;永不回传。
-run(fn):   执行后由 SQLite authorizer 判定是否真的改了数据——改了才整文件
-           带 If-Match 回传(CAS);412 冲突则重拉、重放、重试;重试耗尽抛 WriteConflict。
-           原则:可以失败,绝不重复写、绝不覆盖别人的写。
-缓存:      /tmp 按 ETag 热缓存;下载经临时文件 + os.replace,不会留下半个文件。
-一个 key 一个库,锁粒度是文件,不同库之间永远不冲突。
+read(fn):  opens the local cache mode=ro, SQLite itself refuses writes; never uploads.
+run(fn):   after fn, SQLite's authorizer says whether data really changed; only then the whole file
+           goes back with If-Match (CAS); on 412 re-download, replay, retry; out of retries -> WriteConflict.
+           Rule: failing is allowed, duplicating a write or overwriting someone else's is not.
+Cache:     /tmp keyed by ETag; downloads go through a temp file + os.replace, never a half file.
+One key = one database; the lock is the file, so different databases never conflict.
 
-测试时把模块属性 s3 换成假客户端即可(s3_sqlite.s3 = Fake())。
+Tests swap the module attribute s3 for a fake client (s3_sqlite.s3 = Fake()).
 """
 import hashlib
 import os
@@ -21,8 +21,8 @@ s3 = boto3.client("s3")
 
 _NOT_FOUND = ("404", "NoSuchKey", "NotFound")
 _CONFLICT = ("PreconditionFailed", "ConditionalRequestConflict")
-_TMP_MIN_FREE = 64 * 1024 * 1024  # /tmp 剩余低于此值就淘汰最久未用的缓存
-# authorizer 里"不改数据"的动作;PRAGMA 单独判(带赋值才算写);其余一律算写
+_TMP_MIN_FREE = 64 * 1024 * 1024  # below this much free /tmp, evict the least recently used caches
+# authorizer actions that do not change data; PRAGMA is special (an assignment counts as a write); everything else is a write
 _READ_ACTIONS = {
     sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION,
     sqlite3.SQLITE_RECURSIVE, sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
@@ -51,13 +51,13 @@ def _error_code(e):
 
 
 def _fingerprint(path):
-    """文件是否被改过的廉价事实判据:SQLite 任何落盘都会改 mtime。"""
+    """A cheap fact about whether the file changed: any SQLite write updates mtime."""
     st = os.stat(path)
     return (st.st_mtime_ns, st.st_size)
 
 
 def list_databases(bucket, prefix):
-    """列出 prefix 下所有 .sqlite,返回去掉前缀和扩展名的库名。"""
+    """List every .sqlite under prefix; returns the names without prefix and extension."""
     names = []
     paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
@@ -79,10 +79,10 @@ def database_exists(bucket, key):
 
 
 def create_database(bucket, key):
-    """新建空库。If-None-Match 保证已存在时抛 DatabaseExists 而不是覆盖。"""
+    """Create an empty database. If-None-Match raises DatabaseExists instead of overwriting."""
     tmp = _local_path(bucket, key) + ".new"
     conn = sqlite3.connect(tmp)
-    conn.execute("PRAGMA user_version = 1")  # 让文件落盘成合法的 SQLite 头
+    conn.execute("PRAGMA user_version = 1")  # forces a valid SQLite header onto disk
     conn.commit()
     conn.close()
     try:
@@ -97,7 +97,7 @@ def create_database(bucket, key):
 
 
 def _evict_tmp(keep):
-    """/tmp 空间紧张时删掉最久未更新的一半缓存库(当前库除外)。"""
+    """When /tmp runs low, delete the least recently updated half of the cached databases (not the current one)."""
     try:
         if shutil.disk_usage("/tmp").free > _TMP_MIN_FREE:
             return
@@ -116,15 +116,15 @@ def _evict_tmp(keep):
 
 
 class SqliteS3:
-    """一个实例对应一个库(一个 S3 key)。
+    """One instance = one database (one S3 key).
 
-    用法:
+    Usage:
         db = SqliteS3(bucket, "db/blog.sqlite")
         rows = db.read(lambda c: c.execute("SELECT ...").fetchall())
-        db.run(lambda c: c.execute("INSERT ..."))   # 真写了才回传 S3
+        db.run(lambda c: c.execute("INSERT ..."))   # uploads only if data changed
     """
 
-    # 热 Lambda 实例内共享:/tmp 文件路径 -> 它对应的 S3 ETag
+    # shared within a warm Lambda instance: /tmp path -> the S3 ETag it holds
     _etags = {}
 
     def __init__(self, bucket, key, max_retries=3):
@@ -132,10 +132,10 @@ class SqliteS3:
         self.key = key
         self.max_retries = max_retries
         self.local = _local_path(bucket, key)
-        # 最近一次 read/run 的性能感知:有没有真的去 S3 搬文件
+        # what the last read/run did: whether S3 was actually touched
         self.stats = {"downloaded": False, "uploaded": False}
 
-    # ---- 缓存 ----
+    # ---- cache ----
 
     def _download(self):
         _evict_tmp(keep=self.local)
@@ -143,24 +143,24 @@ class SqliteS3:
         tmp = self.local + ".tmp"
         with open(tmp, "wb") as f:
             f.write(resp["Body"].read())
-        # 上次执行若在 commit 中途被杀,会留下热 journal;新文件配旧 journal 会被 SQLite
-        # "回滚"成坏库,所以侧文件必须先清掉,再原子换上主文件
+        # a run killed mid-commit leaves a hot journal; a new file next to an old journal would be
+        # "rolled back" into a corrupt database, so side files go first, then the main file atomically
         for suffix in ("-journal", "-wal", "-shm"):
             try:
                 os.remove(self.local + suffix)
             except FileNotFoundError:
                 pass
-        os.replace(tmp, self.local)  # 原子替换,中途被杀不会留下半个文件
+        os.replace(tmp, self.local)  # atomic: a kill in the middle never leaves half a file
         SqliteS3._etags[self.local] = resp["ETag"]
         self.stats["downloaded"] = True
 
     def _invalidate(self):
-        """本地副本状态不可信时调用:作废缓存,下次强制重拉。"""
+        """Call when the local copy cannot be trusted: drop the cache, force a re-download next time."""
         SqliteS3._etags.pop(self.local, None)
 
     @property
     def etag(self):
-        """当前本地副本对应的 S3 版本(ETag);read/run 之后有效。"""
+        """The S3 version (ETag) of the current local copy; valid after read/run."""
         return SqliteS3._etags.get(self.local)
 
     def _ensure_fresh(self):
@@ -176,11 +176,11 @@ class SqliteS3:
     def _reset_stats(self):
         self.stats = {"downloaded": False, "uploaded": False}
 
-    # ---- 读 ----
+    # ---- read ----
 
     def read(self, fn, detect_types=0):
-        """fn(conn) -> result。连接以只读模式打开,任何写都会被 SQLite 拒绝。
-        detect_types=sqlite3.PARSE_DECLTYPES 时按列的声明类型调用已注册的 converter(驱动要类型信息时用)。"""
+        """fn(conn) -> result. The connection is read-only; SQLite refuses any write.
+        With detect_types=sqlite3.PARSE_DECLTYPES the registered converters run by declared column type (when the driver asks for types)."""
         self._reset_stats()
         self._ensure_fresh()
         conn = sqlite3.connect(f"file:{self.local}?mode=ro", uri=True, detect_types=detect_types)
@@ -190,13 +190,13 @@ class SqliteS3:
         finally:
             conn.close()
 
-    # ---- 读写 ----
+    # ---- read / write ----
 
     def run(self, fn, detect_types=0):
-        """fn(conn) -> result。只有 fn 真的改了数据才带 If-Match 回传 S3。
+        """fn(conn) -> result. Uploads with If-Match only if fn really changed data.
 
-        fn 必须可重放(纯 SQL 即可):412 冲突时会在新下载的文件上重新执行。
-        所有重试都冲突时抛 WriteConflict——本地改动被丢弃,S3 上保持别人的版本。
+        fn must be replayable (plain SQL is): on a 412 conflict it runs again on the freshly downloaded file.
+        When every retry conflicts, WriteConflict is raised: the local change is dropped, S3 keeps the other writer's version.
         """
         self._reset_stats()
         last_err = None
@@ -205,12 +205,12 @@ class SqliteS3:
             etag = SqliteS3._etags[self.local]
             before = _fingerprint(self.local)
             result, dirty = self._transact(fn, detect_types)
-            # authorizer 管"意图",文件指纹管"事实"(兜住 PRAGMA optimize 这类不带赋值却写文件的)
+            # the authorizer sees intent, the file fingerprint sees facts (catches PRAGMA optimize and friends that write without an assignment)
             if not dirty and _fingerprint(self.local) == before:
                 return result
 
-            # 从这里起本地文件已经是"S3 上没有的新版本":任何失败都必须作废缓存,
-            # 否则下次请求会把它当新鲜缓存用,读到幽灵数据甚至在之后的写里悄悄带上去
+            # from here the local file is a version S3 does not have: any failure must drop the cache,
+            # or the next request would treat it as fresh, read ghost data and even upload it later
             try:
                 with open(self.local, "rb") as f:
                     body = f.read()
@@ -220,7 +220,7 @@ class SqliteS3:
                 self._invalidate()
                 if _error_code(e) in _CONFLICT:
                     last_err = e
-                    continue  # 下一轮重拉最新文件、重放 fn
+                    continue  # next round: re-download, replay fn
                 raise
             except BaseException:
                 self._invalidate()
@@ -230,44 +230,44 @@ class SqliteS3:
             return result
 
         raise WriteConflict(
-            f"s3://{self.bucket}/{self.key}: 并发写冲突,"
-            f"{self.max_retries} 次重试后放弃,本次写入未生效") from last_err
+            f"s3://{self.bucket}/{self.key}: write conflict, "
+            f"gave up after {self.max_retries} retries; this write did not land") from last_err
 
     def _transact(self, fn, detect_types=0):
-        """在显式事务里执行 fn(DDL 也进事务);返回 (result, authorizer 是否看到写动作)。
+        """Run fn inside an explicit transaction (DDL included); returns (result, whether the authorizer saw a write).
 
-        fn 抛异常 → ROLLBACK,本地文件回到执行前;ROLLBACK 自己都失败才作废缓存。
+        fn raising -> ROLLBACK, the local file is as before; only a failed ROLLBACK drops the cache.
         """
         dirty = False
 
-        def authorizer(action, _arg1, arg2, _dbname, _source):  # 签名由 sqlite3 规定
+        def authorizer(action, _arg1, arg2, _dbname, _source):  # signature fixed by sqlite3
             nonlocal dirty
             if action == sqlite3.SQLITE_PRAGMA:
-                if arg2 is not None:  # PRAGMA x = v 才是写
+                if arg2 is not None:  # only PRAGMA x = v is a write
                     dirty = True
             elif action not in _READ_ACTIONS:
                 dirty = True
             return sqlite3.SQLITE_OK
 
-        # isolation_level=None:关掉 sqlite3 模块的隐式事务,自己 BEGIN/COMMIT
+        # isolation_level=None: no implicit transactions from the sqlite3 module; we BEGIN/COMMIT ourselves
         conn = sqlite3.connect(self.local, isolation_level=None, detect_types=detect_types)
         conn.row_factory = sqlite3.Row
         try:
-            # 万一库是 WAL 模式,改回单文件日志,保证 close 后主文件自洽(需在事务外)
+            # if the database is in WAL mode switch back to a single-file journal so the main file is complete after close (outside the transaction)
             conn.execute("PRAGMA journal_mode=DELETE")
-            conn.execute("PRAGMA foreign_keys=ON")  # SQLite 默认不查外键,这里强制开
+            conn.execute("PRAGMA foreign_keys=ON")  # SQLite does not enforce foreign keys by default
             conn.set_authorizer(authorizer)
             conn.execute("BEGIN")
             try:
                 result = fn(conn)
-                if conn.in_transaction:  # fn 自己 COMMIT 过就不重复
+                if conn.in_transaction:  # fn may have committed itself
                     conn.execute("COMMIT")
             except BaseException:
                 try:
                     if conn.in_transaction:
                         conn.execute("ROLLBACK")
                 except sqlite3.Error:
-                    self._invalidate()  # 回滚都失败,本地状态不可信
+                    self._invalidate()  # even ROLLBACK failed: the local state cannot be trusted
                 raise
         finally:
             conn.close()
