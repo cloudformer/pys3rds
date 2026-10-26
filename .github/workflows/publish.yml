@@ -11,3 +11,4 @@ jobs:
       install: "pytest boto3 pymysql sqlglot"
       compose-service: "mysql"
       test-env: "MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat"
+    secrets: inherit
