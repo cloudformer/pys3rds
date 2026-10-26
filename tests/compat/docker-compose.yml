@@ -1,6 +1,7 @@
 # Real databases for the compatibility tests.
 #   docker compose -f tests/compat/docker-compose.yml up -d
 #   MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat python3 -m pytest tests/compat -v
+name: s3rds-compat   # unique per project, so the series' compat containers never mix
 services:
   mysql:
     image: mysql:8.0
@@ -18,4 +19,4 @@ services:
     environment:
       POSTGRES_PASSWORD: test
       POSTGRES_DB: compat
-    ports: ["5432:5432"]
+    ports: ["5433:5432"]   # 5433: 5432 is often taken by a local PostgreSQL
