@@ -87,8 +87,8 @@ Open `db_url` in a browser, sign in with `db_user` / `db_password`. Create a dat
 ### 3. Connect from code
 
 ```bash
-pip install s3rds              # pys3sqlite: SQLite dialect, zero dependencies
-pip install "s3rds[mysql]"     # + pys3mysql: write MySQL, translated on the client (sqlglot)
+pip install s3rds              # s3rds.sqlite: SQLite dialect, zero dependencies
+pip install "s3rds[mysql]"     # + s3rds.pymysql: write MySQL, translated on the client (sqlglot)
 ```
 
 Pick the dialect you want to write; the API is pymysql-shaped either way, and `import pymysql`
@@ -140,9 +140,10 @@ and on s3rds, comparing results, Python types, rowcount, lastrowid and error cod
 Regenerate the report (needs Docker for the MySQL reference):
 
 ```bash
-docker compose -f tests/compat/docker-compose.yml up -d mysql
-MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat python3 -m pytest tests -q
-docker compose -f tests/compat/docker-compose.yml down
+python3 -m pytest tests -q                 # leaves Docker alone: live if MySQL is running, else the compat tests are skipped
+python3 -m pytest tests -q --docker up     # starts MySQL in Docker, waits until healthy, tests; keeps it running
+python3 -m pytest tests -q --docker run    # the same, then stops it if all passed (on a failure it keeps running)
+python3 -m pytest tests -q --docker down   # the same, then stops it whatever the result
 ```
 
 ## Guarantees

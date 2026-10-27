@@ -84,8 +84,8 @@ aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
 ### 3. 程序连接
 
 ```bash
-pip install s3rds              # pys3sqlite:SQLite 方言,零依赖
-pip install "s3rds[mysql]"     # + pys3mysql:写 MySQL,客户端翻译(sqlglot)
+pip install s3rds              # s3rds.sqlite:SQLite 方言,零依赖
+pip install "s3rds[mysql]"     # + s3rds.pymysql:写 MySQL,客户端翻译(sqlglot)
 ```
 
 想写哪种方言就 import 哪个，API 都是 pymysql 形状；将来上真 RDS 就是最后一次 `import pymysql`：
@@ -136,9 +136,10 @@ rowcount、lastrowid 和错误码。
 重新生成报告（MySQL 参照库跑在 Docker 里）：
 
 ```bash
-docker compose -f tests/compat/docker-compose.yml up -d mysql
-MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat python3 -m pytest tests -q
-docker compose -f tests/compat/docker-compose.yml down
+python3 -m pytest tests -q                 # 不碰 Docker：MySQL 在跑就实时比对，否则跳过兼容性测试
+python3 -m pytest tests -q --docker up     # 在 Docker 里启动 MySQL，等健康后测试；测完保持运行
+python3 -m pytest tests -q --docker run    # 同上，全部通过就关掉；有失败就保持运行并提示
+python3 -m pytest tests -q --docker down   # 同上，不管结果一律关掉
 ```
 
 ## 保证
