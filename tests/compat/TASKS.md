@@ -6,10 +6,11 @@ The numbers [REPORT.md](REPORT.md) refers to in its gap notes.
 
 | task | what |
 |---|---|
-| 18 | transactions: `autocommit=False` buffers writes, `commit()` runs them as one `/tx`, `rollback()` discards; `START TRANSACTION` / `COMMIT` / `ROLLBACK` statements — **0.2.0** (behaviour change) |
-| 22 | Lambda SQLite 3.40 limits: `GROUP_CONCAT(… ORDER BY …)` (needs 3.44) and `UPDATE` / `DELETE … ORDER BY LIMIT` (needs a compile option). Fix by translating to subqueries, or ship a newer SQLite in the Lambda |
+| 18 | `s3rds.pymysql` transactions: `autocommit=False` and `START TRANSACTION` / `COMMIT` / `ROLLBACK` statements, on the open transactions of task 23 (pymysql opens one on any statement, sqlite3 only on writes) — **0.2.0** |
+| 23 | `s3rds.sqlite` `autocommit=False` (open transactions replayed on the server, `/replay`) and SQLAlchemy `sqlite+s3rds://` (`tests/compat/test_sqlalchemy.py`) — **0.2.0**, done in code, waiting for the first full run |
+| 24 | Django: a database backend on `s3rds.sqlite`; its SQLite backend registers ~40 Python functions on the connection, which would have to exist on the server — evaluate before starting |
+| 22 | `UPDATE` / `DELETE … ORDER BY LIMIT`: the server's SQLite (sqlean.py 3.50.4) is built without ENABLE_UPDATE_DELETE_LIMIT. Fix by translating to a subquery on the rowid. (`GROUP_CONCAT(… ORDER BY …)` works since the server ships SQLite 3.50.4.) |
 | 5 | `strict=True` connection option: refuse any statement the translator does not recognise instead of best-effort |
-| 10 | pin the sqlglot version in `client/pyproject.toml` (translations change between releases) |
 | 19 | Lambda timeout 15 s → 30 s (terraform + CloudFormation) |
 | 21 | CHANGELOG entry for 0.2.0 |
 
@@ -28,6 +29,7 @@ Permanent, not tasks: ⚪ quirks (documented MySQL behaviour we do not imitate) 
 | 7 | inline `KEY` / `UNIQUE KEY (a, b)` → `CREATE INDEX` in the same transaction | 0.1.2 |
 | 8 | result types: `DATETIME` / `DATE` / `TIME` / `DECIMAL` columns, `SUM` / `AVG` / division, strict-mode 1366 (server + driver) | 0.1.2 |
 | 9 | `NOW()` / `CURDATE()` / `CURTIME()` return `datetime` / `date` / `timedelta` | 0.1.2 |
+| 10 | sqlglot pinned `>=30.24,<31` (the release the report was verified with), a dependency of `pip install s3rds` | 0.2.0 |
 | 11 | Lambda runtime's SQLite confirmed: **3.40.0**, math functions yes, `ENABLE_UPDATE_DELETE_LIMIT` no | — |
 | 12 | `DESCRIBE` / `SHOW CREATE TABLE` show the declared MySQL types (`_s3rds_columns`) | 0.1.2 |
 | 13 | `BLOB`: bytes parameters and results (`{"$b": base64}`) (server + driver) | 0.1.2 |

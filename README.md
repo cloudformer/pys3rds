@@ -14,7 +14,7 @@
 | Maintenance window | none | yes, with restarts | yes | yes |
 | SLA | Lambda 99.95% · S3 99.9% | none for single-AZ | 99.95% | 99.99% |
 | Durability | S3, 11 nines | EBS | EBS, replicated | 6 copies |
-| SQL compatibility | SQLite dialect, or MySQL dialect via `s3rds.pymysql` — see the generated [compatibility report](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
+| SQL compatibility | SQLite dialect, MySQL dialect via `s3rds.pymysql`, SQLAlchemy Core / ORM via `sqlite+s3rds://` — see the generated [compatibility report](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
 
 > Design principle: this is a relational database, so correctness comes first — atomicity and
 > consistency are not negotiable. A write may fail, but it never duplicates and never corrupts.
@@ -57,10 +57,10 @@ Mapped to RDS concepts:
 **Terraform**
 
 ```bash
-cp terraform/example.json terraform/my.json      # set aws_profile, env, db_password, auth_token
+cp terraform/example.json terraform/my.json      # set aws_profile, env, db_password
 terraform -chdir=terraform init
 terraform -chdir=terraform apply -var-file=my.json
-terraform -chdir=terraform output                 # db_url, db_ro_url, demo_url
+terraform -chdir=terraform output                 # db_url, db_ro_url
 terraform -chdir=terraform destroy -var-file=my.json   # tear everything down (the bucket must be empty)
 ```
 
@@ -68,14 +68,14 @@ terraform -chdir=terraform destroy -var-file=my.json   # tear everything down (t
 
 ```bash
 cp cloudformation/example-params.json cloudformation/params.json   # set passwords
-cp -r client/s3rds src/demo/                                    # demo bundles the driver
+python3 scripts/build_server.py                                  # src/db + the pinned SQLite engine
 aws cloudformation package --template-file cloudformation/template.yaml \
     --s3-bucket <any-bucket-you-own> --output-template-file /tmp/s3rds.yaml
 aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
     --capabilities CAPABILITY_IAM --parameter-overrides file://cloudformation/params.json
 ```
 
-Both create the same thing: an S3 bucket (`<env>-srds-db-2026`), three Lambdas (read/write, read-only, demo)
+Both create the same thing: an S3 bucket (`<env>-srds-db-2026`), two Lambdas (read/write, read-only)
 with public Function URLs, and one scoped IAM role. The bucket name is global on S3 — if it is taken, change the suffix.
 
 ### 2. Open the console
@@ -87,8 +87,7 @@ Open `db_url` in a browser, sign in with `db_user` / `db_password`. Create a dat
 ### 3. Connect from code
 
 ```bash
-pip install s3rds              # s3rds.sqlite: SQLite dialect, zero dependencies
-pip install "s3rds[mysql]"     # + s3rds.pymysql: write MySQL, translated on the client (sqlglot)
+pip install s3rds    # s3rds.sqlite, s3rds.pymysql (MySQL translated on the client by sqlglot), sqlite+s3rds:// for SQLAlchemy
 ```
 
 Pick the dialect you want to write; the API is pymysql-shaped either way, and `import pymysql`
@@ -115,7 +114,20 @@ conn.transaction([                                   # all-or-nothing, one S3 wr
 ])
 ```
 
-Zero dependencies (standard library only). The wire protocol is plain HTTPS + JSON, so any language works:
+**SQLAlchemy** (Core and ORM): only the URL changes. SQLAlchemy's own SQLite dialect writes the SQL, nothing
+is translated; `s3rds.sqlite` replaces the standard library's `sqlite3` underneath, with sqlite3's transactions
+(see [Transactions](#guarantees)):
+
+```python
+engine = create_engine("sqlite+s3rds://admin:...@xxxx.lambda-url.us-east-2.on.aws/blog")
+# later, on RDS:        "mysql+pymysql://admin:...@my-rds.amazonaws.com/blog"
+```
+
+An application that already supports SQLite (`DATABASE_URL=sqlite:///...`) needs no code change.
+Not available: Python functions registered on the connection (`create_function`, SQLAlchemy's
+`regexp_match`) — they would have to run on the server.
+
+One dependency, sqlglot, used only by `s3rds.pymysql`. The wire protocol is plain HTTPS + JSON, so any language works:
 
 ```bash
 curl -s -u "admin:password" -H "content-type: application/json" \
@@ -127,8 +139,9 @@ curl -s -u "admin:password" -H "content-type: application/json" \
 
 The compatibility matrix is generated, not hand-written: **[tests/compat/REPORT.md](tests/compat/REPORT.md)**.
 Every row is one feature (DDL, DML, queries, functions, constraints, metadata, types) run with the same SQL on the
-reference database — MySQL 8.0 in Docker for `s3rds.pymysql`, the standard-library `sqlite3` for `s3rds.sqlite` —
-and on s3rds, comparing results, Python types, rowcount, lastrowid and error codes.
+reference database — MySQL 8.0 in Docker for `s3rds.pymysql`, the standard-library `sqlite3` for `s3rds.sqlite`,
+SQLAlchemy on `sqlite3` for `sqlite+s3rds` — and on s3rds, comparing results, Python types, rowcount, lastrowid
+and error codes.
 
 | Status | Meaning |
 |---|---|
@@ -144,7 +157,21 @@ python3 -m pytest tests -q                 # leaves Docker alone: live if MySQL 
 python3 -m pytest tests -q --docker up     # starts MySQL in Docker, waits until healthy, tests; keeps it running
 python3 -m pytest tests -q --docker run    # the same, then stops it if all passed (on a failure it keeps running)
 python3 -m pytest tests -q --docker down   # the same, then stops it whatever the result
+python3 -m pytest tests -q --docker run --aws real-srds.json   # MySQL in Docker vs the deployed Lambda (URL from terraform output)
 ```
+
+### Versions
+
+What the report was verified with; `client/pyproject.toml` (`[tool.s3rds.verified]`) holds the same.
+
+| | Version | Fixed by |
+|---|---|---|
+| Python (client) | 3.9 – 3.13: regression suite on 3.9.6, full comparison on 3.13.7 | `requires-python = ">=3.9"` |
+| Server runtime | AWS Lambda `python3.12` | `terraform/main.tf` |
+| SQLite (server engine) | 3.50.4, shipped in the Lambda zip (the runtime's own is 3.40.0) | `src/db/requirements.txt`: `sqlean.py==3.50.4.5` |
+| sqlglot (MySQL translation) | 30.24 | dependency `sqlglot>=30.24,<31` |
+| SQLAlchemy | 2.0, tested on 2.0.55 | extra `pip install "s3rds[sqlalchemy]"` = `SQLAlchemy>=2.0,<2.1` |
+| MySQL (reference) | 8.0.46 in Docker | `tests/compat/docker-compose.yml`: `mysql:8.0.46` |
 
 ## Guarantees
 
@@ -152,23 +179,31 @@ python3 -m pytest tests -q --docker down   # the same, then stops it whatever th
 |---|---|
 | **Atomicity** | explicit `BEGIN/COMMIT` per request (DDL included) + atomic S3 PUT; `/tx` runs several statements as one |
 | **Consistency** | SQLite constraints; `STRICT` tables by default; `PRAGMA foreign_keys=ON` on every write connection |
-| **Isolation** | one writer (reserved concurrency 1 + `If-Match` CAS); readers see a whole-file snapshot |
+| **Isolation** | one writer (reserved concurrency 1 + `If-Match` CAS); readers see a whole-file snapshot; an open transaction (`autocommit=False`) is serializable: if another writer commits first it fails, it never overwrites |
 | **Durability** | the client gets OK only after the S3 PUT succeeds (11 nines) |
 | **No duplicate writes** | the driver re-sends only when the request provably never reached the server; timeouts raise "result unknown" |
 | **Availability** | Lambda and S3 are regional, multi-AZ services: no instance to fail, no AZ to lose, no maintenance window. Higher than a single-AZ RDS instance (which carries no SLA); Multi-AZ RDS costs 2× to match |
 
-**Transactions, concretely.** Every statement is committed and durable in S3 the moment `execute()` returns.
-`commit()` is a no-op. `rollback()` cannot undo statements that already ran — the driver warns if anything
-was written since the last `commit()`, and stays silent otherwise. When several statements must succeed or
-fail together, use `conn.transaction([...])` (one commit, one S3 write) or `cursor.executemany(...)`.
+**Transactions, concretely.** By default (`autocommit=True`) every statement is committed and durable in S3
+the moment `execute()` returns. `commit()` is a no-op. `rollback()` cannot undo statements that already ran —
+the driver warns if anything was written since the last `commit()`, and stays silent otherwise. When several
+statements must succeed or fail together, use `conn.transaction([...])` (one commit, one S3 write) or
+`cursor.executemany(...)`.
+
+`s3rds.sqlite.connect(..., autocommit=False)` (what SQLAlchemy uses) gives sqlite3's transactions:
+`INSERT` / `UPDATE` / `DELETE` open one, reads inside it see its own uncommitted writes, `commit()` writes S3
+once, `rollback()` discards, `SAVEPOINT` / `ROLLBACK TO` work. The server keeps no session: every statement in
+a transaction carries the transaction's writes so far, the server replays them on the version the transaction
+began on, runs the new statement and rolls back; `commit()` replays them once more for real. If another writer
+commits in between, the next statement or `commit()` raises `OperationalError` ("transaction conflict") — roll
+back and run the transaction again. The cost grows with the length of the transaction (each statement re-runs
+the writes before it): keep transactions short. A write that calls `CURRENT_TIMESTAMP` or `random()` may store
+a slightly different value at commit than it showed inside the transaction.
 
 **How to write code for it** (stateless, like every Lambda): one statement = one durable write; read first,
-decide, then write everything that belongs together in one `transaction([...])`; put the decision in the
-SQL where you can (`WHERE balance >= %s`, `ON DUPLICATE KEY UPDATE`, `INSERT … SELECT`) instead of
-read-modify-write across calls; make retries safe with idempotent statements. What does not fit:
-"write, then read my own uncommitted rows, then decide" — there is no session to hold that state.
-0.2.0 adds `autocommit=False` for code that already calls `commit()` / `rollback()`: writes are
-buffered and sent as one transaction on `commit()`; the rule above still applies.
+decide, then write everything that belongs together in one `transaction([...])` or one short open transaction;
+put the decision in the SQL where you can (`WHERE balance >= %s`, `ON DUPLICATE KEY UPDATE`,
+`INSERT … SELECT`) instead of read-modify-write across calls; make retries safe with idempotent statements.
 
 **Large results.** The server pages results at 4 MB and the driver fetches every page inside `execute()`,
 so you always get the complete result; nothing is ever truncated silently. If the database changes while
@@ -203,10 +238,11 @@ Write MySQL, run on the same endpoint. Statements are translated on the client (
 Not supported — raises `NotSupportedError`, never silently wrong: stored procedures/functions, triggers,
 `FULLTEXT`, `SELECT … FOR UPDATE`, `LOCK TABLES`, `GRANT`/users.
 
-**Who this is for:** code that writes SQL — pymysql-style calls, your own data-access layer. ORMs are not a
-target: SQLAlchemy / Django need a server session (they probe `SHOW VARIABLES`, read their own uncommitted
-writes inside a transaction), and there is no session here. If you need an ORM, that is the moment to move
-to RDS — see [MIGRATION.md](MIGRATION.md).
+**Who this is for:** code that writes MySQL — pymysql-style calls, your own data-access layer. An ORM goes
+through SQLAlchemy's SQLite dialect instead (`sqlite+s3rds://`, see [Connect from code](#3-connect-from-code)):
+the MySQL dialect would need the server session that SQLAlchemy's MySQL dialect probes (`SHOW VARIABLES`).
+Django is not supported yet. If you need an ORM on MySQL, that is the moment to move to RDS — see
+[MIGRATION.md](MIGRATION.md).
 
 Result types match pymysql: `DATETIME` → `datetime`, `DATE` → `date`, `TIME` → `timedelta`, `DECIMAL` /
 `SUM` / `AVG` / integer division → `Decimal`, `BLOB` → `bytes` (both directions), `NOW()` → `datetime`.
@@ -236,7 +272,6 @@ Write throughput is a few per second. Good for personal apps, internal tools, bl
 
 ```
 src/db/           the database: lambda_function.py (HTTP API), s3_sqlite.py (engine), index.html (console)
-src/demo/         a sample business Lambda that uses the endpoint like an RDS
 client/           the pip package s3rds: s3rds/sqlite.py, s3rds/pymysql.py, s3rds/psycopg2.py, pyproject.toml
 terraform/        deployment, option A
 cloudformation/   deployment, option B
@@ -256,9 +291,10 @@ git tag v0.2.0 && git push --tags      # tests → build client/ → PyPI (trust
 
 ## Roadmap
 
-Open work is tracked in [tests/compat/TASKS.md](tests/compat/TASKS.md). Next: 0.2.0 buffered transactions
-(`autocommit=False`), then `s3rds.psycopg2` (PostgreSQL dialect; the placeholder module ships today and
-`connect()` raises until implemented) and a one-click CloudFormation *Launch Stack* button.
+Open work is tracked in [tests/compat/TASKS.md](tests/compat/TASKS.md). Next: 0.2.0 open transactions
+(`autocommit=False`) and SQLAlchemy (`sqlite+s3rds://`), then `s3rds.psycopg2` (PostgreSQL dialect; the
+placeholder module ships today and `connect()` raises until implemented) and a one-click CloudFormation
+*Launch Stack* button.
 
 ## The Redefine Serverless series
 

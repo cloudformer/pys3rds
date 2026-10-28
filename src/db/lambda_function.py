@@ -8,6 +8,9 @@ GET  /api/db/{db}/table/{t}?limit&offset    browse rows (with rowid and structur
 POST /api/db/{db}/query {sql, params?}      run one SQL statement (parameters allowed)
 POST /api/db/{db}/tx {statements:[{sql,params?},...]}
                                             several statements in one transaction: all commit or none
+POST /api/db/{db}/replay {statements, replay, base?, commit}
+                                            an open transaction of the driver: replay the log, run the rest,
+                                            roll back (a look) or commit
 
 Read / write is decided by the endpoint, never by guessing the SQL:
   write endpoint (default)   /query goes through run(): SQLite decides whether data changed, only then S3 is written
@@ -20,11 +23,10 @@ import hmac
 import json
 import os
 import re
-import sqlite3
 import time
 
 from s3_sqlite import (DatabaseExists, DatabaseNotFound, SqliteS3, WriteConflict,
-                       create_database, list_databases)
+                       create_database, list_databases, sqlite3)
 
 BUCKET = os.environ["DB_BUCKET"]
 PREFIX = os.environ.get("DB_PREFIX", "")
@@ -72,6 +74,10 @@ class Forbidden(Exception):
 
 class VersionChanged(Exception):
     """The database changed while paging: two pages would be two versions, so refuse to mix them."""
+
+
+class TxConflict(Exception):
+    """An open transaction's base version is gone: someone else committed, so its reads may be stale."""
 
 
 # ---------------- shared helpers ----------------
@@ -223,16 +229,21 @@ def _exec_one(c, sql, params, offset=0):
         if size >= PAGE_BYTES:
             has_more = cur.fetchone() is not None
             break
-    return {"columns": [d[0] for d in cur.description], "rows": rows, "rowcount": -1,
+    # rowcount as sqlite3 reports it once every row is read: -1 for SELECT, the rows changed for
+    # INSERT / UPDATE / DELETE … RETURNING (SQLAlchemy checks it, e.g. for version_id_col)
+    return {"columns": [d[0] for d in cur.description], "rows": rows,
+            "rowcount": -1 if has_more else cur.rowcount,
             "lastrowid": None, "has_more": has_more, "next_offset": offset + len(rows)}
 
 
-def _run(inst, fn, typed=False):
-    """read() or run() by endpoint, with timing and the S3 action; a write on the read-only endpoint is refused by SQLite -> 403."""
+def _run(inst, fn, typed=False, trial=False):
+    """read() or run() by endpoint (trial() for a look inside an open transaction), with timing and the S3 action;
+    a write on the read-only endpoint is refused by SQLite -> 403."""
     t0 = time.perf_counter()
     detect = sqlite3.PARSE_DECLTYPES if typed else 0
     try:
-        result = inst.read(fn, detect) if READONLY else inst.run(fn, detect)
+        result = (inst.read(fn, detect) if READONLY else
+                  inst.trial(fn, detect) if trial else inst.run(fn, detect))
     except sqlite3.OperationalError as e:
         if READONLY and "readonly" in str(e):
             raise Forbidden("this is the read-only endpoint; send writes to the write endpoint") from None
@@ -283,22 +294,54 @@ def tx(event, db):
     """Several statements, one transaction. SqliteS3.run is already one BEGIN/COMMIT;
     fn just runs them in order; any error -> ROLLBACK of everything, S3 untouched."""
     body = _body(event)
+    return _statements(db, body, 0, None, True)
+
+
+def replay(event, db):
+    """The driver's open transactions (connect(autocommit=False)); the server keeps no session, the driver
+    sends the transaction so far with every request:
+      statements  the log (statements that may have written) followed by the new ones
+      replay: n   the first n are the log: run again, results not returned
+      base: etag  the version the transaction began on; any other version -> 409 TxConflict
+      commit      false: roll back at the end (a look inside the transaction, S3 never written);
+                  true: commit and upload, as /tx
+    The reply carries etag, the version the statements ran on. A separate route, so that a server
+    without it answers 404 instead of committing a look."""
+    body = _body(event)
+    n, base, commit = body.get("replay", 0), body.get("base"), body.get("commit")
+    if not isinstance(n, int) or isinstance(n, bool) or n < 0:
+        raise BadRequest("replay must be a non-negative integer")
+    if base is not None and not isinstance(base, str):
+        raise BadRequest("base must be an ETag string")
+    if not isinstance(commit, bool):
+        raise BadRequest("commit must be true or false")
+    return _statements(db, body, n, base, commit)
+
+
+def _statements(db, body, replayed, base, commit):
     stmts = body.get("statements")
     if not isinstance(stmts, list) or not stmts:
         raise BadRequest("statements must be a non-empty list: [{sql, params?}, ...]")
+    if replayed > len(stmts):
+        raise BadRequest("replay is larger than the number of statements")
     prepared = [_prepare(s, f"statements[{i}]") for i, s in enumerate(stmts)]
+    inst = _db(db)
 
     def fn(c):
+        if base is not None and inst.etag != base:
+            raise TxConflict()
         results = []
         for i, (sql, params) in enumerate(prepared):
             r = _exec_one(c, sql, params)
+            if i < replayed:
+                continue
             if r.pop("has_more", False):  # no paging inside a transaction: an oversized result is an explicit error
                 raise BadRequest(f"statements[{i}] result exceeds {PAGE_BYTES} bytes; run it as a plain query")
             r.pop("next_offset", None)
             results.append(r)
-        return {"results": results}
+        return {"results": results, "etag": inst.etag}
 
-    return _run(_db(db), fn, bool(body.get("types")))
+    return _run(inst, fn, bool(body.get("types")), trial=not commit)
 
 
 ROUTES = [
@@ -308,6 +351,7 @@ ROUTES = [
     ("GET",  re.compile(rf"/api/db/(?P<db>{NAME})/table/(?P<table>{NAME})$"), browse),
     ("POST", re.compile(rf"/api/db/(?P<db>{NAME})/query$"), query),
     ("POST", re.compile(rf"/api/db/(?P<db>{NAME})/tx$"), tx),
+    ("POST", re.compile(rf"/api/db/(?P<db>{NAME})/replay$"), replay),
 ]
 
 
@@ -347,6 +391,9 @@ def lambda_handler(event, context):
         status, data = 409, {"error": str(e)}
     except VersionChanged:
         status, data = 409, {"error": "database version changed while paging; re-run the query"}
+    except TxConflict:
+        status, data = 409, {"error": "transaction conflict: another writer committed since this transaction "
+                                      "began; roll back and run the transaction again"}
     except sqlite3.Error as e:
         status, data = 400, {"error": f"{type(e).__name__}: {e}"}
     except Exception as e:

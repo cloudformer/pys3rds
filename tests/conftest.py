@@ -28,6 +28,8 @@ from botocore.exceptions import ClientError  # noqa: E402
 from compat_report import (pytest_collection_modifyitems, pytest_configure,  # noqa: E402,F401
                            pytest_runtest_logreport, pytest_sessionfinish, pytest_terminal_summary)
 
+pytest_plugins = ["compat_docker", "compat_aws"]   # python3 -m pytest tests -q [--docker up | run | down] [--aws <var-file>]
+
 
 class FakeS3:
     def __init__(self):

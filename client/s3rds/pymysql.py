@@ -1,6 +1,6 @@
 """s3rds.pymysql — the MySQL-dialect driver for s3rds. Write MySQL; it runs on the s3rds endpoint (SQLite engine).
 
-    pip install "s3rds[mysql]"             # pulls in sqlglot for the dialect translation
+    pip install s3rds                      # sqlglot (the dialect translation) comes with it
 
     from s3rds import pymysql              # later: `import pymysql` on a real RDS, nothing else changes
     conn = pymysql.connect(host="xxx.lambda-url.us-east-2.on.aws",
@@ -248,6 +248,16 @@ def _substring_index(node, args):
     return template.format(*args)
 
 
+def _concat_ws(node, args):
+    """CONCAT_WS without SQLite's concat_ws() (3.44+; the Lambda runtime's SQLite is older): NULL arguments
+    are skipped, a NULL separator gives NULL -- as MySQL."""
+    sep, *items = [a.sql(dialect="sqlite") for a in node.expressions]
+    if not items:
+        raise NotSupportedError(1582, "wrong number of arguments for CONCAT_WS()")
+    parts = " || ".join(f"COALESCE({sep} || ({x}), '')" for x in items)
+    return f"SUBSTR({parts}, LENGTH({sep}) + 1)"
+
+
 _FUNCS = {
     "NOW": "CURRENT_TIMESTAMP",
     "CURDATE": "CURRENT_DATE",
@@ -265,6 +275,7 @@ _FUNCS = {
     "PAD": lambda node, args: _PAD.format(*args, left="" if node.args.get("is_left") else f"{args[0]} || ",
                                           right=f" || {args[0]}" if node.args.get("is_left") else ""),
     "SUBSTRING_INDEX": _substring_index,
+    "CONCAT_WS": _concat_ws,
     "YEAR": "CAST(STRFTIME('%Y', {0}) AS INTEGER)",
     "MONTH": "CAST(STRFTIME('%m', {0}) AS INTEGER)",
     "DAY": "CAST(STRFTIME('%d', {0}) AS INTEGER)",
@@ -546,7 +557,7 @@ def _translate_stmts(sql):
     """MySQL statement -> tuple of SQLite statements (usually one; CREATE TABLE with inline indexes and
     RENAME TABLE give several, a type-only ALTER gives none)."""
     if sqlglot is None:
-        raise NotSupportedError(0, "the MySQL dialect needs sqlglot: pip install 's3rds[mysql]'")
+        raise NotSupportedError(0, "the MySQL dialect needs sqlglot (an s3rds dependency): pip install s3rds")
     m = _RENAME_TABLE.match(sql)
     if m:
         pairs = _RENAME_PAIR.findall(m.group(1))

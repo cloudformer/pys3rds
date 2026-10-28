@@ -2,9 +2,9 @@ __pycache__/
 *.pyc
 .DS_Store
 .pytest_cache/
-# CloudFormation deploy copies the driver package next to the demo; terraform reads it from client/
-src/demo/s3rds/
 # pip build output
 client/dist/
 client/build/
 client/*.egg-info/
+# local test environment (Python >= 3.10 with the pinned versions, see README "Versions")
+.venv/

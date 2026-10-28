@@ -16,11 +16,23 @@ from urllib.parse import urlparse
 import pytest
 
 import lambda_function as lf
+from s3_sqlite import sqlite3 as ENGINE   # the server's SQLite module: sqlean (pinned) on Lambda
 import s3rds
 from s3rds import pymysql as s3mysql
 from s3rds import sqlite as s3sqlite
 
+PIN = open(os.path.join(os.path.dirname(__file__), "..", "..", "src", "db", "requirements.txt")).read().split()[-1]
+
+
+@pytest.fixture(autouse=True)
+def pinned_engine():
+    """Every comparison runs on the deployed engine, never on whatever sqlite3 this machine has."""
+    if ENGINE.__name__ != "sqlean":
+        pytest.skip(f"the compatibility suite needs the server's pinned engine: pip install {PIN} (Python >= 3.10)")
+
+
 AUTH = "Basic " + base64.b64encode(b"admin:pw").decode()
+import compat_aws     # --aws: the deployed stack instead of the in-process handler
 import compat_report  # report plugin lives in tests/ so it sees the whole run
 
 
@@ -64,19 +76,19 @@ def compare(step, real, ours):
             assert real.lastrowid == ours.lastrowid, f"{sql}\n  lastrowid real={real.lastrowid} s3rds={ours.lastrowid}"
 
 
-def in_process(module, fake_s3, monkeypatch, bucket):
+def in_process(module, fake_s3, monkeypatch, bucket, **connect_kw):
     """An s3rds connection whose HTTP layer calls the lambda handler in-process."""
     monkeypatch.setattr(lf, "BUCKET", bucket)
     monkeypatch.setattr(lf, "READONLY", False)
-    c = module.connect(host="in-process.test", user="admin", password="pw", database="compat")
+    c = module.connect(host="in-process.test", user="admin", password="pw", database="compat", **connect_kw)
 
     def post(path, payload):
         event = {"requestContext": {"http": {"method": "POST"}}, "rawPath": path,
                  "headers": {"authorization": AUTH}, "body": json.dumps(payload)}
         resp = lf.lambda_handler(event, None)
         data = json.loads(resp["body"])
-        if resp["statusCode"] >= 400:
-            raise s3rds.sqlite.Error(resp["statusCode"], data.get("error", ""))
+        if resp["statusCode"] >= 400:  # the same reply -> exception mapping as over HTTP
+            raise s3rds.sqlite._error(resp["statusCode"], data.get("error", ""))
         return data
 
     monkeypatch.setattr(c, "_post", post)
@@ -107,10 +119,37 @@ def real_mysql():
     conn.close()
 
 
+@pytest.fixture(scope="session")
+def deployed(request):
+    """--aws: the deployed stack and its own test database `compat`, emptied once per run as the Docker
+    container starts empty. None without --aws."""
+    live = compat_aws.endpoint(request.config, url="db_url", user="db_user", password="db_password")
+    if live:
+        c = s3mysql.connect(host=live["url"], user=live["user"], password=live["password"], database="compat")
+        c.create_database()
+        for _ in range(5):   # tables referenced by a foreign key go in a later pass
+            names = [r[0] for r in c._raw("SELECT name FROM sqlite_master WHERE type = 'table' "
+                                          "AND name NOT LIKE 'sqlite_%'")["rows"]]
+            for name in names:
+                try:
+                    c._raw(f'DROP TABLE "{name}"')
+                except s3mysql.Error:
+                    pass
+            if not names:
+                break
+        c.close()
+    return live
+
+
 @pytest.fixture
-def s3_mysql(fake_s3, monkeypatch, bucket):
-    c = in_process(s3mysql, fake_s3, monkeypatch, bucket)
-    return c, s3mysql.cursors.DictCursor
+def s3_mysql(deployed, fake_s3, monkeypatch, bucket):
+    if deployed:
+        c = s3mysql.connect(host=deployed["url"], user=deployed["user"], password=deployed["password"],
+                            database="compat")
+    else:
+        c = in_process(s3mysql, fake_s3, monkeypatch, bucket)
+    yield c, s3mysql.cursors.DictCursor
+    c.close()
 
 
 @pytest.fixture
@@ -152,11 +191,11 @@ def mysql_pair(real_mysql, s3_mysql):
     return run
 
 
-# ---- SQLite side (no Docker: the reference is the standard library) ----
+# ---- SQLite side (no Docker: the reference is the server's pinned SQLite module, called directly) ----
 
 @pytest.fixture
 def sqlite_pair(fake_s3, monkeypatch, bucket, tmp_path):
-    import sqlite3
+    sqlite3 = ENGINE
 
     class RefCursor:
         """sqlite3 wrapped to look like a pymysql DictCursor for run_step()."""
@@ -205,9 +244,35 @@ def sqlite_pair(fake_s3, monkeypatch, bucket, tmp_path):
         for step in script:
             sql, params = step[0], step[1]
             r, o = run_step(real, None, sql, params), run_step(ours, s3sqlite.cursors.DictCursor, sql, params)
-            # error classes differ by construction (sqlite3.X vs s3rds Error); compare that both failed or neither
-            if r.error or o.error:
-                assert bool(r.error) == bool(o.error), f"{sql}\n  real: {r.error}\n  s3rds: {o.error}"
-                continue
-            compare(step, r, o)
+            compare(step, r, o)  # errors: the same DB-API class (sqlite3.IntegrityError <-> s3rds IntegrityError)
+    return run
+
+
+# ---- SQLAlchemy side (no Docker: the reference is SQLAlchemy on the server's pinned SQLite module) ----
+
+@pytest.fixture
+def sqlalchemy_pair(fake_s3, monkeypatch, bucket, tmp_path):
+    """run(scenario) -> scenario(engine, other) on SQLAlchemy + sqlite3 and on sqlite+s3rds; the returned
+    values must be equal. `other` is a second engine on the same database (another client)."""
+    sa = pytest.importorskip("sqlalchemy")
+    from sqlalchemy.dialects import registry
+    registry.register("sqlite.s3rds", "s3rds.sqlite", "SQLAlchemyDialect")  # pip install registers it
+
+    def ref_engine():
+        e = sa.create_engine(f"sqlite:///{tmp_path / 'ref.sqlite'}", module=ENGINE)
+        # the s3rds server enforces foreign keys on every connection; give the reference the same
+        sa.event.listen(e, "connect", lambda c, _r: c.execute("PRAGMA foreign_keys=ON"))
+        return e
+
+    def s3_engine():
+        return sa.create_engine("sqlite+s3rds://admin:pw@in-process.test/compat", creator=lambda: in_process(
+            s3sqlite, fake_s3, monkeypatch, bucket, autocommit=False))
+
+    if not compat_report.versions.get("sqlalchemy"):
+        compat_report.versions["sqlalchemy"] = f"SQLAlchemy {sa.__version__}"
+
+    def run(scenario):
+        real = scenario(ref_engine(), ref_engine())
+        ours = scenario(s3_engine(), s3_engine())
+        assert real == ours, f"\n  real:  {real}\n  s3rds: {ours}"
     return run

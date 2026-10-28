@@ -14,7 +14,7 @@
 | 维护窗口 | 无 | 有，会重启 | 有 | 有 |
 | SLA | Lambda 99.95% · S3 99.9% | 单 AZ 无 SLA | 99.95% | 99.99% |
 | 持久性 | S3，11 个 9 | EBS | EBS 复制 | 6 副本 |
-| SQL 兼容性 | SQLite 方言，或经 `s3rds.pymysql` 的 MySQL 方言——见自动生成的[兼容性报告](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
+| SQL 兼容性 | SQLite 方言、经 `s3rds.pymysql` 的 MySQL 方言、经 `sqlite+s3rds://` 的 SQLAlchemy Core / ORM——见自动生成的[兼容性报告](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
 
 > 设计原则：这是一个关系型数据库，数据正确性第一——原子性、一致性不妥协，
 > 写入可以失败，但绝不重复、绝不写错。优势是省钱（闲时 ≈ $0），代价是性能一般。
@@ -55,10 +55,10 @@ s3rds 没有实例，两次请求之间什么都不在运行。Lambda 在永久�
 **Terraform**
 
 ```bash
-cp terraform/example.json terraform/my.json      # 改 aws_profile、env、db_password、auth_token
+cp terraform/example.json terraform/my.json      # 改 aws_profile、env、db_password
 terraform -chdir=terraform init
 terraform -chdir=terraform apply -var-file=my.json
-terraform -chdir=terraform output                 # db_url、db_ro_url、demo_url
+terraform -chdir=terraform output                 # db_url、db_ro_url
 terraform -chdir=terraform destroy -var-file=my.json   # 全部拆掉（桶要先清空）
 ```
 
@@ -66,14 +66,14 @@ terraform -chdir=terraform destroy -var-file=my.json   # 全部拆掉（桶要�
 
 ```bash
 cp cloudformation/example-params.json cloudformation/params.json   # 改密码
-cp -r client/s3rds src/demo/                                    # demo 要带上驱动
+python3 scripts/build_server.py                                  # src/db 加上固定版本的 SQLite 引擎
 aws cloudformation package --template-file cloudformation/template.yaml \
     --s3-bucket <你自己任意一个桶> --output-template-file /tmp/s3rds.yaml
 aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
     --capabilities CAPABILITY_IAM --parameter-overrides file://cloudformation/params.json
 ```
 
-两种方式建出来的东西一样：一个 S3 桶（`<env>-srds-db-2026`）、三个 Lambda（读写、只读、demo）
+两种方式建出来的东西一样：一个 S3 桶（`<env>-srds-db-2026`）、两个 Lambda（读写、只读）
 和它们的公网 Function URL、一个最小权限 IAM role。S3 桶名全球唯一，被占了就改后缀。
 
 ### 2. 打开控制台
@@ -84,8 +84,7 @@ aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
 ### 3. 程序连接
 
 ```bash
-pip install s3rds              # s3rds.sqlite:SQLite 方言,零依赖
-pip install "s3rds[mysql]"     # + s3rds.pymysql:写 MySQL,客户端翻译(sqlglot)
+pip install s3rds    # s3rds.sqlite、s3rds.pymysql(MySQL 由 sqlglot 在客户端翻译)、SQLAlchemy 用的 sqlite+s3rds://
 ```
 
 想写哪种方言就 import 哪个，API 都是 pymysql 形状；将来上真 RDS 就是最后一次 `import pymysql`：
@@ -111,7 +110,18 @@ conn.transaction([                                   # 全成或全败,一次 S3
 ])
 ```
 
-零依赖（只用标准库）。线协议就是 HTTPS + JSON，任何语言都能接：
+**SQLAlchemy**（Core 和 ORM）：只换连接串。SQL 由 SQLAlchemy 自带的 SQLite 方言生成，不做任何翻译；
+底下的标准库 `sqlite3` 换成 `s3rds.sqlite`，事务行为和 sqlite3 一致（见[事务](#保证)）：
+
+```python
+engine = create_engine("sqlite+s3rds://admin:...@xxxx.lambda-url.us-east-2.on.aws/blog")
+# 以后上 RDS:          "mysql+pymysql://admin:...@my-rds.amazonaws.com/blog"
+```
+
+本来就支持 SQLite（`DATABASE_URL=sqlite:///...`）的应用，代码不用改。
+不可用：注册在连接上的 Python 函数（`create_function`、SQLAlchemy 的 `regexp_match`）——它们得跑在服务端。
+
+只有一个依赖 sqlglot，只有 `s3rds.pymysql` 用到。线协议就是 HTTPS + JSON，任何语言都能接：
 
 ```bash
 curl -s -u "admin:密码" -H "content-type: application/json" \
@@ -123,8 +133,8 @@ curl -s -u "admin:密码" -H "content-type: application/json" \
 
 兼容性矩阵是自动生成的，不是手写的：**[tests/compat/REPORT.md](tests/compat/REPORT.md)**。
 每一行是一项能力（DDL、DML、查询、函数、约束、元数据、类型），用同一条 SQL 在参照库——`s3rds.pymysql` 对
-Docker 里的 MySQL 8.0，`s3rds.sqlite` 对标准库 `sqlite3`——和 s3rds 上各跑一遍，比对结果、Python 类型、
-rowcount、lastrowid 和错误码。
+Docker 里的 MySQL 8.0，`s3rds.sqlite` 对标准库 `sqlite3`，`sqlite+s3rds` 对跑在 `sqlite3` 上的 SQLAlchemy——
+和 s3rds 上各跑一遍，比对结果、Python 类型、rowcount、lastrowid 和错误码。
 
 | 状态 | 含义 |
 |---|---|
@@ -140,7 +150,21 @@ python3 -m pytest tests -q                 # 不碰 Docker：MySQL 在跑就实�
 python3 -m pytest tests -q --docker up     # 在 Docker 里启动 MySQL，等健康后测试；测完保持运行
 python3 -m pytest tests -q --docker run    # 同上，全部通过就关掉；有失败就保持运行并提示
 python3 -m pytest tests -q --docker down   # 同上，不管结果一律关掉
+python3 -m pytest tests -q --docker run --aws real-srds.json   # Docker 里的 MySQL vs 线上 Lambda（URL 取自 terraform output）
 ```
+
+### 版本
+
+报告验证时用的版本；`client/pyproject.toml`（`[tool.s3rds.verified]`）里写的是同一份。
+
+| | 版本 | 由谁固定 |
+|---|---|---|
+| Python（客户端） | 3.9 – 3.13：3.9.6 跑回归测试，3.13.7 跑完整对比 | `requires-python = ">=3.9"` |
+| 服务端运行时 | AWS Lambda `python3.12` | `terraform/main.tf` |
+| SQLite（服务端引擎） | 3.50.4，随 Lambda 代码包一起部署（运行时自带的是 3.40.0） | `src/db/requirements.txt`：`sqlean.py==3.50.4.5` |
+| sqlglot（MySQL 翻译） | 30.24 | 依赖 `sqlglot>=30.24,<31` |
+| SQLAlchemy | 2.0，实测 2.0.55 | 可选 `pip install "s3rds[sqlalchemy]"` = `SQLAlchemy>=2.0,<2.1` |
+| MySQL（参照库） | Docker 里的 8.0.46 | `tests/compat/docker-compose.yml`：`mysql:8.0.46` |
 
 ## 保证
 
@@ -148,22 +172,27 @@ python3 -m pytest tests -q --docker down   # 同上，不管结果一律关掉
 |---|---|
 | **原子性** | 每条请求显式 `BEGIN/COMMIT`（DDL 也在内）+ S3 PUT 本身原子；`/tx` 多条语句一个事务 |
 | **一致性** | SQLite 约束；新表默认 `STRICT`；每个写连接 `PRAGMA foreign_keys=ON` |
-| **隔离性** | 单写者（reserved concurrency 1 + `If-Match` CAS）；读到的是整文件快照 |
+| **隔离性** | 单写者（reserved concurrency 1 + `If-Match` CAS）；读到的是整文件快照；打开的事务（`autocommit=False`）是 serializable：别的写者先提交它就失败，绝不覆盖 |
 | **持久性** | S3 PUT 成功后客户端才收到 OK（11 个 9） |
 | **绝不重复写** | 驱动只在"请求确定没送达"时重发；超时一律报"结果未知" |
 | **可用性** | Lambda 和 S3 是区域级、天然多 AZ 的服务：没有实例会挂、没有 AZ 可丢、没有维护窗口。高于单 AZ 的 RDS 实例（单 AZ 没有 SLA）；RDS 要开 Multi-AZ 花两倍钱才追平 |
 
-**事务，说具体点。** 每条语句在 `execute()` 返回时就已提交并落到 S3。`commit()` 是空操作。
+**事务，说具体点。** 默认（`autocommit=True`）每条语句在 `execute()` 返回时就已提交并落到 S3。`commit()` 是空操作。
 `rollback()` **撤销不了已经执行的语句**——上次 `commit()` 之后有过写入它会发警告，没有就保持安静
 （连接池和 ORM 归还连接时会调它）。多条语句要同成同败，用 `conn.transaction([...])`（一次提交、一次 S3 写入）
 或 `cursor.executemany(...)`。
 
+`s3rds.sqlite.connect(..., autocommit=False)`（SQLAlchemy 用的就是它）提供 sqlite3 的事务：`INSERT` /
+`UPDATE` / `DELETE` 开启事务，事务里的读能看到自己未提交的写，`commit()` 只写一次 S3，`rollback()` 直接丢弃，
+`SAVEPOINT` / `ROLLBACK TO` 可用。服务端不保存会话：事务里的每条语句都带上本事务之前的写，服务端在事务开始时的
+那个版本上重放、执行新语句、再回滚；`commit()` 再重放一次并真正提交。期间若有别的写者先提交，下一条语句或
+`commit()` 抛 `OperationalError`（"transaction conflict"）——回滚后重跑整个事务。代价随事务长度增长（每条语句
+都要重放之前的写），事务要短。写入里用了 `CURRENT_TIMESTAMP` 或 `random()` 的，提交时存下的值可能和事务里
+看到的略有不同。
+
 **代码该怎么写**（无状态，和 Lambda 一样）：一条语句 = 一次落盘；先读、再决定、最后把该一起成功的写全放进
-一个 `transaction([...])`；能放进 SQL 的判断就放进去（`WHERE balance >= %s`、`ON DUPLICATE KEY UPDATE`、
-`INSERT … SELECT`），别跨调用读-改-写；语句写成幂等的，重试才安全。不适合的模式只有一种：
-"先写、再读自己没提交的行、再决定"——没有会话来保存这个状态。
-0.2.0 会加 `autocommit=False`，给已经在调 `commit()` / `rollback()` 的代码用：写先攒着，`commit()` 时作为
-一个事务发出去；上面的规则不变。
+一个 `transaction([...])` 或一个短的打开事务；能放进 SQL 的判断就放进去（`WHERE balance >= %s`、
+`ON DUPLICATE KEY UPDATE`、`INSERT … SELECT`），别跨调用读-改-写；语句写成幂等的，重试才安全。
 
 **大结果集。** 服务端按 4 MB 分页，驱动在 `execute()` 里取完所有页再返回，结果永远完整，绝不静默截断。
 翻页期间库被改了，服务端拒绝混合两个版本，驱动自动重跑查询。
@@ -197,9 +226,9 @@ pytest tests/ -v
 不支持的——抛 `NotSupportedError`，绝不静默出错：存储过程/函数、触发器、`FULLTEXT`、
 `SELECT … FOR UPDATE`、`LOCK TABLES`、`GRANT`/用户管理。
 
-**适合谁：** 直接写 SQL 的代码——pymysql 风格的调用、自己的数据访问层。ORM 不是目标：SQLAlchemy / Django
-依赖服务端会话（连上先探测 `SHOW VARIABLES`、事务里要读到自己未提交的写），这里没有会话。
-需要 ORM 的时候就是该迁 RDS 的时候——见 [MIGRATION.md](MIGRATION.md)。
+**适合谁：** 直接写 MySQL 的代码——pymysql 风格的调用、自己的数据访问层。ORM 走 SQLAlchemy 的 SQLite 方言
+（`sqlite+s3rds://`，见[程序连接](#3-程序连接)）：走 MySQL 方言需要服务端会话，SQLAlchemy 的 MySQL 方言连上就会
+探测 `SHOW VARIABLES`。Django 暂不支持。需要在 MySQL 上用 ORM 的时候就是该迁 RDS 的时候——见 [MIGRATION.md](MIGRATION.md)。
 
 结果类型和 pymysql 一致：`DATETIME` → `datetime`、`DATE` → `date`、`TIME` → `timedelta`、`DECIMAL` /
 `SUM` / `AVG` / 整数除法 → `Decimal`、`BLOB` → `bytes`（双向）、`NOW()` → `datetime`。
@@ -228,7 +257,6 @@ verified 的可以放心用；gap 的标了哪个任务来修。每次运行自�
 
 ```
 src/db/           数据库本体:lambda_function.py(HTTP API)、s3_sqlite.py(引擎)、index.html(控制台)
-src/demo/         业务 Lambda 示例,把 endpoint 当 RDS 用
 client/           pip 包 s3rds:s3rds/sqlite.py、s3rds/pymysql.py、s3rds/psycopg2.py、pyproject.toml
 terraform/        部署方式 A
 cloudformation/   部署方式 B
@@ -248,7 +276,7 @@ git tag v0.2.0 && git push --tags      # 测试 → 构建 client/ → 发 PyPI(
 
 ## 路线图
 
-待办在 [tests/compat/TASKS.md](tests/compat/TASKS.md)。下一步：0.2.0 缓冲事务（`autocommit=False`），
+待办在 [tests/compat/TASKS.md](tests/compat/TASKS.md)。下一步：0.2.0 打开的事务（`autocommit=False`）和 SQLAlchemy（`sqlite+s3rds://`），
 然后 `s3rds.psycopg2`（PostgreSQL 方言；占位模块已随包发布，`connect()` 在实现前会直接报错）和
 CloudFormation 一键 *Launch Stack* 按钮。
 

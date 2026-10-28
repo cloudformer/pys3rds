@@ -64,6 +64,7 @@
 
   <text x="170" y="350" text-anchor="middle" class="sub">your code, anywhere it runs</text>
   <text x="170" y="368" text-anchor="middle" class="sub"><tspan text-decoration="line-through" fill="#64748B">import pymysql</tspan>  →  <tspan fill="#F1F5F9" font-weight="600">from s3rds import pymysql</tspan></text>
+  <text x="170" y="386" text-anchor="middle" class="sub">SQLAlchemy: <tspan text-decoration="line-through" fill="#64748B">sqlite://</tspan>  →  <tspan fill="#F1F5F9" font-weight="600">sqlite+s3rds://</tspan></text>
 
   <!-- compute -> endpoint -->
   <path d="M300 220 L 418 220" class="edge" marker-end="url(#arrow)"/>

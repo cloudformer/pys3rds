@@ -30,7 +30,7 @@ variable "env" {
 }
 
 variable "name" {
-  description = "Project name; resources are <name>-db-lambda, <name>-demo-lambda, <name>-lambda-role"
+  description = "Project name; resources are <name>-db-lambda, <name>-lambda-role"
   type        = string
   default     = "srds"
 }
@@ -69,11 +69,4 @@ variable "console" {
   description = "Serve the built-in web console at GET / on the db endpoints. false = API only."
   type        = bool
   default     = true
-}
-
-# ---- the demo API's own gate (x-auth-token header), unrelated to the database credentials ----
-variable "auth_token" {
-  description = "Shared secret for the demo service's own API gate"
-  type        = string
-  sensitive   = true
 }

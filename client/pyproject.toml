@@ -4,25 +4,34 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "s3rds"
-version = "0.1.2"
-description = "A truly serverless RDS on your own AWS account: Lambda URL endpoint, SQLite on S3, ≈ $0 when idle. Drivers named after the standard clients: s3rds.sqlite, s3rds.pymysql."
+version = "0.2.0"
+description = "A truly serverless RDS on your own AWS account: Lambda URL endpoint, SQLite on S3, ≈ $0 when idle. Drivers named after the standard clients: s3rds.sqlite, s3rds.pymysql; SQLAlchemy via sqlite+s3rds://."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Frank Zhang" }]
-keywords = ["serverless", "rds", "sqlite", "s3", "lambda", "database", "pymysql", "dbapi"]
+keywords = ["serverless", "rds", "sqlite", "s3", "lambda", "database", "pymysql", "dbapi", "sqlalchemy"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.13",
   "Topic :: Database",
   "Topic :: Database :: Front-Ends",
 ]
-dependencies = []  # standard library only
+# one install for every driver. sqlglot: s3rds.pymysql's MySQL -> SQLite translation, imported only when a MySQL
+# statement is translated; pinned to the release the compatibility report was verified with (translations
+# change between releases). SQLAlchemy is not a dependency: the applications that use sqlite+s3rds:// have it.
+dependencies = ["sqlglot>=30.24,<31"]
 
 [project.optional-dependencies]
-mysql = ["sqlglot>=25.0"]  # s3rds.pymysql: MySQL -> SQLite dialect translation
+mysql = []  # kept so that pip install "s3rds[mysql]" from 0.1.x keeps working
+sqlalchemy = ["SQLAlchemy>=2.0,<2.1"]   # the series the compatibility report verified; pip install "s3rds[sqlalchemy]"
+
+[project.entry-points."sqlalchemy.dialects"]
+"sqlite.s3rds" = "s3rds.sqlite:SQLAlchemyDialect"
 
 [project.urls]
 Homepage = "https://github.com/cloudformer/s3rds"
@@ -34,3 +43,13 @@ Issues = "https://github.com/cloudformer/s3rds/issues"
 
 [tool.setuptools]
 packages = ["s3rds"]
+
+# The versions tests/compat/REPORT.md was verified with; README.md, README.zh.md and client/README.md state the same.
+[tool.s3rds.verified]
+python = ["3.9.6", "3.13.7"]       # the client: regression suite on 3.9.6, the full comparison on 3.13.7
+lambda_runtime = "python3.12"      # the server (terraform/main.tf)
+sqlite = "3.50.4"                  # the server's engine, shipped in the Lambda zip (the runtime's own is 3.40.0)
+sqlean = "3.50.4.5"                # sqlean.py, which carries it (src/db/requirements.txt)
+sqlglot = "30.24.0"
+sqlalchemy = "2.0.55"
+mysql_reference = "8.0.46"         # tests/compat/docker-compose.yml

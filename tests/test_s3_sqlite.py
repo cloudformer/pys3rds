@@ -1,12 +1,11 @@
 """The storage engine's guarantees, one test each."""
 import os
-import sqlite3
 
 import pytest
 from botocore.exceptions import ClientError
 
 import s3_sqlite
-from s3_sqlite import SqliteS3, WriteConflict, create_database
+from s3_sqlite import SqliteS3, WriteConflict, create_database, sqlite3   # the engine module the server uses
 
 KEY = "db/t.sqlite"
 SCHEMA = "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT NOT NULL) STRICT"

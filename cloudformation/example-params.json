@@ -3,6 +3,5 @@
   { "ParameterKey": "DbUser",     "ParameterValue": "admin" },
   { "ParameterKey": "DbPassword", "ParameterValue": "CHANGE-ME" },
   { "ParameterKey": "EndpointAuth", "ParameterValue": "NONE" },
-  { "ParameterKey": "Console",    "ParameterValue": "1" },
-  { "ParameterKey": "AuthToken",  "ParameterValue": "CHANGE-ME-TOO" }
+  { "ParameterKey": "Console",    "ParameterValue": "1" }
 ]

@@ -6,8 +6,11 @@ real database you change one import line and nothing else:
     from s3rds import pymysql        # today: MySQL dialect on the s3rds endpoint
     import pymysql                   # later: a real RDS MySQL -- pymysql.connect(...), pymysql.cursors, errors all unchanged
 
-    from s3rds import sqlite         # SQLite dialect, no translation, zero dependencies
+    from s3rds import sqlite         # SQLite dialect, no translation, standard library only
     from s3rds import psycopg2       # PostgreSQL dialect: placeholder, connect() raises until implemented
+
+SQLAlchemy (Core / ORM) needs no import: create_engine("sqlite+s3rds://user:password@<lambda-url>/<db>")
+uses SQLAlchemy's SQLite dialect with s3rds.sqlite as its driver; on RDS the URL becomes mysql+pymysql://.
 """
 from . import sqlite  # noqa: F401
 from . import pymysql  # noqa: F401  (sqlglot is only needed when a MySQL statement is actually translated)

@@ -59,29 +59,16 @@ resource "aws_iam_role_policy" "lambda" {
   })
 }
 
-# ---------------- packaging: independent zips ----------------
-data "archive_file" "db_code" {
-  type        = "zip"
-  source_dir  = "${path.module}/../src/db"
-  excludes    = ["**/__pycache__/**", "**/.DS_Store"]
-  output_path = "${path.module}/.build/db.zip"
+# ---------------- packaging: src/db + its pinned engine (src/db/requirements.txt, Linux wheels) ----------------
+# scripts/build_server.py stages terraform/.build/db at plan time (pip downloads the wheels once)
+data "external" "db_build" {
+  program = ["python3", "${path.module}/../scripts/build_server.py"]
 }
 
-# the demo zip = business code + the s3rds driver taken straight from client/ (the pip package source)
-data "archive_file" "demo_code" {
+data "archive_file" "db_code" {
   type        = "zip"
-  output_path = "${path.module}/.build/demo.zip"
-  source {
-    filename = "lambda_function.py"
-    content  = file("${path.module}/../src/demo/lambda_function.py")
-  }
-  dynamic "source" {
-    for_each = fileset("${path.module}/../client/s3rds", "*.py")
-    content {
-      filename = "s3rds/${source.value}"
-      content  = file("${path.module}/../client/s3rds/${source.value}")
-    }
-  }
+  source_dir  = data.external.db_build.result.dir
+  output_path = "${path.module}/.build/db.zip"
 }
 
 # ---------------- Lambda 1: the database (DataGrip-style web console) ----------------
@@ -109,6 +96,7 @@ resource "aws_lambda_function" "db" {
   }
 }
 
+# TODO: review — Lambda 1 and 1b differ only in READONLY and the reserved concurrency: one for_each over {rw, ro}.
 # ---------------- Lambda 1b: read-only endpoint (same code + READONLY=1, unlimited read concurrency) ----------------
 # not a replica: it reads the same S3 file as the writer, zero copy, zero lag; just a second entrance.
 resource "aws_lambda_function" "db_ro" {
@@ -162,32 +150,6 @@ resource "aws_lambda_permission" "db_ro_url_invoke" {
   invoked_via_function_url = true
 }
 
-# ---------------- Lambda 2: the demo service (uses the database endpoint like RDS) ----------------
-resource "aws_lambda_function" "demo" {
-  function_name    = "${var.name}-demo-lambda"
-  role             = aws_iam_role.lambda.arn
-  runtime          = "python3.12"
-  handler          = "lambda_function.lambda_handler"
-  filename         = data.archive_file.demo_code.output_path
-  source_code_hash = data.archive_file.demo_code.output_base64sha256
-  timeout          = 15
-  memory_size      = 256
-
-  reserved_concurrent_executions = 1
-
-  environment {
-    variables = {
-      # the same parameters as RDS: endpoint / dbname / user / password.
-      # moving to a real RDS: point these four at it, swap the driver, the business code stays.
-      DB_ENDPOINT = aws_lambda_function_url.db.function_url
-      DB_NAME     = "demo"
-      DB_USER     = var.db_user
-      DB_PASSWORD = var.db_password
-      AUTH_TOKEN  = var.auth_token # the demo API's own gate, unrelated to the database credentials
-    }
-  }
-}
-
 # ---------------- Function URLs ----------------
 # endpoint_auth = NONE:    public URL, our user/password is the only gate. A public URL
 #                          needs BOTH permission statements (AWS requirement since Oct 2025):
@@ -218,32 +180,6 @@ resource "aws_lambda_permission" "db_url_invoke" {
   statement_id             = "AllowPublicFunctionUrlInvoke"
   action                   = "lambda:InvokeFunction"
   function_name            = aws_lambda_function.db.function_name
-  principal                = "*"
-  invoked_via_function_url = true
-}
-
-resource "aws_lambda_function_url" "demo" {
-  function_name      = aws_lambda_function.demo.function_name
-  authorization_type = "NONE"
-  cors {
-    allow_origins = ["*"]
-    allow_methods = ["*"]
-    allow_headers = ["content-type", "x-auth-token"]
-  }
-}
-
-resource "aws_lambda_permission" "demo_url" {
-  statement_id           = "AllowPublicFunctionUrl"
-  action                 = "lambda:InvokeFunctionUrl"
-  function_name          = aws_lambda_function.demo.function_name
-  principal              = "*"
-  function_url_auth_type = "NONE"
-}
-
-resource "aws_lambda_permission" "demo_url_invoke" {
-  statement_id             = "AllowPublicFunctionUrlInvoke"
-  action                   = "lambda:InvokeFunction"
-  function_name            = aws_lambda_function.demo.function_name
   principal                = "*"
   invoked_via_function_url = true
 }

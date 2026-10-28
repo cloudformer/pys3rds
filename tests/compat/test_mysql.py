@@ -12,11 +12,12 @@ The report is written to tests/compat/REPORT.md.
 """
 import pytest
 
-# The production engine is the Lambda runtime's SQLite, not this machine's: features it lacks are gaps
-# even when the local sqlite3 is newer. Checked on the console with
-#   SELECT sqlite_version(), sqlite_compileoption_used('ENABLE_UPDATE_DELETE_LIMIT')
-LAMBDA_SQLITE = (3, 40, 0)
-LAMBDA_UPDATE_DELETE_LIMIT = False
+# The production engine is the pinned one (src/db/requirements.txt), the same module this suite runs
+from s3_sqlite import sqlite3 as ENGINE  # noqa: E402
+
+LAMBDA_SQLITE = ENGINE.sqlite_version_info
+LAMBDA_UPDATE_DELETE_LIMIT = bool(ENGINE.connect(":memory:").execute(
+    "SELECT sqlite_compileoption_used('ENABLE_UPDATE_DELETE_LIMIT')").fetchone()[0])
 
 T = "DROP TABLE IF EXISTS t"
 USERS = ("CREATE TABLE t (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(50) NOT NULL, "
@@ -96,6 +97,8 @@ def test_string_functions(mysql_pair):
     mysql_pair([
         ("SELECT IFNULL(NULL, 'd') AS v, CONCAT_WS('-', 'a', 'b') AS w, CONCAT('x', 'y') AS c, "
          "UPPER('ab') AS u, LENGTH('abc') AS l, SUBSTRING('hello', 2, 3) AS s", []),
+        ("SELECT CONCAT_WS('-', 'a', NULL, 'b') AS a, CONCAT_WS(',', NULL) AS b, CONCAT_WS(NULL, 'x') AS c, "
+         "CONCAT_WS(', ', 1, 2.5) AS d", []),
     ])
 
 
@@ -511,7 +514,7 @@ def test_delete_join(mysql_pair):
 
 
 @pytest.mark.xfail(not LAMBDA_UPDATE_DELETE_LIMIT, run=False, strict=True,
-                   reason="task 22: the Lambda runtime's SQLite is built without ENABLE_UPDATE_DELETE_LIMIT")
+                   reason="task 22: the server's SQLite is built without ENABLE_UPDATE_DELETE_LIMIT")
 def test_update_delete_order_limit(mysql_pair):
     """DML | UPDATE / DELETE ... ORDER BY ... LIMIT | task 22"""
     mysql_pair([
@@ -566,7 +569,7 @@ def test_window_functions(mysql_pair):
 
 
 @pytest.mark.xfail(LAMBDA_SQLITE < (3, 44), run=False, strict=True,
-                   reason="task 22: ORDER BY inside GROUP_CONCAT needs SQLite 3.44; the Lambda runtime has 3.40")
+                   reason="task 22: ORDER BY inside GROUP_CONCAT needs SQLite 3.44")
 def test_group_concat(mysql_pair):
     """Queries | GROUP_CONCAT with ORDER BY and SEPARATOR | task 22"""
     mysql_pair([

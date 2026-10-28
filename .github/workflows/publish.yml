@@ -10,7 +10,7 @@ jobs:
       id-token: write   # the called workflow may publish with trusted publishing
     uses: cloudformer/redefine-aws-serverless-workflow/.github/workflows/reusable-publish.yml@main
     with:
-      install: "pytest boto3 pymysql sqlglot"
+      install: "pytest boto3 pymysql sqlglot==30.24.0 sqlalchemy==2.0.55 sqlean.py==3.50.4.5"
       compose-service: "mysql"
       test-env: "MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat"
     secrets: inherit

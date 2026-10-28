@@ -8,11 +8,6 @@ output "db_ro_url" {
   value       = aws_lambda_function_url.db_ro.function_url
 }
 
-output "demo_url" {
-  description = "The demo service"
-  value       = aws_lambda_function_url.demo.function_url
-}
-
 output "db_bucket" {
   value = aws_s3_bucket.db.bucket
 }

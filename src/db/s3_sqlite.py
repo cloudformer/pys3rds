@@ -12,7 +12,13 @@ Tests swap the module attribute s3 for a fake client (s3_sqlite.s3 = Fake()).
 import hashlib
 import os
 import shutil
-import sqlite3
+
+try:
+    import sqlean as sqlite3   # the pinned engine (src/db/requirements.txt), bundled into the Lambda zip
+except ImportError:            # from source without it: the local regression tests only
+    import sqlite3
+if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") and sqlite3.__name__ != "sqlean":
+    raise RuntimeError("the zip lacks the pinned SQLite engine: build it with python3 scripts/build_server.py")
 
 import boto3
 from botocore.exceptions import ClientError
@@ -26,6 +32,12 @@ _TMP_MIN_FREE = 64 * 1024 * 1024  # below this much free /tmp, evict the least r
 _READ_ACTIONS = {
     sqlite3.SQLITE_SELECT, sqlite3.SQLITE_READ, sqlite3.SQLITE_FUNCTION,
     sqlite3.SQLITE_RECURSIVE, sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT,
+}
+# PRAGMAs whose argument names a table / index (PRAGMA table_info("t")): reads, not assignments.
+# ORMs reflect with them on every metadata call; counted as writes each one re-uploaded the database
+_READ_PRAGMAS = {
+    "table_info", "table_xinfo", "table_list", "index_list", "index_info", "index_xinfo",
+    "foreign_key_list", "foreign_key_check", "integrity_check", "quick_check",
 }
 
 
@@ -233,17 +245,30 @@ class SqliteS3:
             f"s3://{self.bucket}/{self.key}: write conflict, "
             f"gave up after {self.max_retries} retries; this write did not land") from last_err
 
-    def _transact(self, fn, detect_types=0):
+    # ---- write, look, roll back ----
+
+    def trial(self, fn, detect_types=0):
+        """fn(conn) inside a transaction that is always rolled back: fn sees its own writes, nobody else
+        does, S3 is never written. The driver's transactions are built on it: replay the statements written
+        so far, run one more, return its result, forget everything."""
+        self._reset_stats()
+        self._ensure_fresh()
+        result, _dirty = self._transact(fn, detect_types, commit=False)
+        return result
+
+    def _transact(self, fn, detect_types=0, commit=True):
         """Run fn inside an explicit transaction (DDL included); returns (result, whether the authorizer saw a write).
 
         fn raising -> ROLLBACK, the local file is as before; only a failed ROLLBACK drops the cache.
+        commit=False -> ROLLBACK even when fn succeeds.
         """
         dirty = False
 
-        def authorizer(action, _arg1, arg2, _dbname, _source):  # signature fixed by sqlite3
+        def authorizer(action, arg1, arg2, _dbname, _source):  # signature fixed by sqlite3
             nonlocal dirty
             if action == sqlite3.SQLITE_PRAGMA:
-                if arg2 is not None:  # only PRAGMA x = v is a write
+                # only PRAGMA x = v is a write; the file fingerprint still catches anything that changed the file
+                if arg2 is not None and (arg1 or "").lower() not in _READ_PRAGMAS:
                     dirty = True
             elif action not in _READ_ACTIONS:
                 dirty = True
@@ -260,8 +285,12 @@ class SqliteS3:
             conn.execute("BEGIN")
             try:
                 result = fn(conn)
+                if not commit and not conn.in_transaction:
+                    # a COMMIT / END inside a trial wrote to the local file only: that copy is no longer S3's
+                    self._invalidate()
+                    raise sqlite3.OperationalError("COMMIT / END inside a transaction trial; use the commit request")
                 if conn.in_transaction:  # fn may have committed itself
-                    conn.execute("COMMIT")
+                    conn.execute("COMMIT" if commit else "ROLLBACK")
             except BaseException:
                 try:
                     if conn.in_transaction:

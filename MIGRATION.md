@@ -3,8 +3,8 @@
 s3rds is for the long tail: small databases, idle most of the time, ≈ $0. When you outgrow it, a real
 MySQL is one import line away.
 
-**When:** a database approaches tens of MB, writes arrive several times a second, you need an ORM,
-sessions or row locks, or tools that speak the MySQL protocol (Workbench, DMS, Redshift federation).
+**When:** a database approaches tens of MB, writes arrive several times a second, you need Django or
+an ORM on MySQL, long transactions, sessions or row locks, or tools that speak the MySQL protocol (Workbench, DMS, Redshift federation).
 
 1. Create the RDS MySQL 8.0 instance (db.t4g.micro is ≈ $12 / month in us-east-2 plus gp3 storage).
    The business Lambda must join the VPC (`vpc_config`, `AWSLambdaVPCAccessExecutionRole`) and its
@@ -26,8 +26,13 @@ sessions or row locks, or tools that speak the MySQL protocol (Workbench, DMS, R
    the code: `commit()` now matters (`autocommit=False` is pymysql's default), `create_database()`
    and the cold-start "ensure table" go away (schema belongs to a migration script), and the SQLite-only
    bits (`STRICT`, `rowid`) are dropped — the compatibility report lists what already runs on both.
+
+   With SQLAlchemy, the URL is the change: `sqlite+s3rds://user:pw@<lambda-url>/<db>` →
+   `mysql+pymysql://user:pw@<rds-endpoint>/<db>`. Models and queries stay; create the schema on MySQL
+   with `metadata.create_all()` or your Alembic migrations (MySQL needs a length on `String` columns),
+   then copy the data as in step 2.
 4. Move the password out of the var file into SSM Parameter Store, let RDS take the backups, and
    delete the stack: `terraform -chdir=terraform destroy -var-file=my.json`.
 
-What you gain: sessions and transactions across requests, locks, ORMs, the MySQL protocol, unlimited
+What you gain: sessions and long transactions, locks, every ORM, the MySQL protocol, unlimited
 writers. What you lose: the ≈ $0 idle bill.

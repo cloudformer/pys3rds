@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.2.0 — 2026-10-27
+
+SQLAlchemy and open transactions. Server redeploy required (new `/replay` route); with an old server,
+`autocommit=False` raises "redeploy the server" instead of committing anything.
+
+- **SQLAlchemy** (Core and ORM): `create_engine("sqlite+s3rds://user:password@<lambda-url>/<db>")`,
+  no extra install. SQLAlchemy's own SQLite dialect, `s3rds.sqlite` as its driver; nothing
+  translated. Compared with SQLAlchemy on `sqlite3` in `tests/compat/test_sqlalchemy.py`.
+- **`s3rds.sqlite.connect(autocommit=False)`**: sqlite3's transactions — implicit `BEGIN` before
+  `INSERT` / `UPDATE` / `DELETE` / `REPLACE`, reads see the transaction's own writes, `commit()` writes S3 once,
+  `rollback()` discards, `SAVEPOINT` / `ROLLBACK TO`, `BEGIN` / `COMMIT` / `ROLLBACK` statements,
+  `isolation_level` / `in_transaction`. Serializable: another writer committing first makes the transaction
+  fail with `OperationalError` ("transaction conflict"). Default `autocommit=True` unchanged.
+- **DB-API exception classes** in `s3rds.sqlite`: `IntegrityError`, `OperationalError`, `ProgrammingError`, …
+  (subclasses of `s3rds.sqlite.Error`, which still catches everything), chosen as sqlite3 would.
+- `CONCAT_WS` works on the Lambda runtime's SQLite (`concat_ws()` needs SQLite 3.44): rewritten to
+  `||` / `COALESCE`, NULL arguments skipped, a NULL separator gives NULL, as MySQL. Found by the first run
+  against the deployed stack.
+- Tests: `python3 -m pytest tests -q --docker run --aws <var-file>` compares MySQL in Docker with the
+  deployed Lambda Function URL instead of the in-process handler.
+- `executemany` with no parameter sets returns 0 instead of a server error.
+- **The server ships its own SQLite 3.50.4** (`sqlean.py==3.50.4.5`, `src/db/requirements.txt`) instead of the
+  Lambda runtime's 3.40.0 (the same in python3.12 / 3.13 / 3.14). `scripts/build_server.py` stages `src/db` with
+  the Linux wheel; Terraform runs it at plan time (new provider `hashicorp/external`: `terraform init` once),
+  CloudFormation packages its output. `GROUP_CONCAT(… ORDER BY … SEPARATOR …)` now verified: MySQL 86% → 87%.
+- Exact versions everywhere they are ours: the server engine, the test references (`mysql:8.0.46`,
+  SQLAlchemy 2.0.55, sqlglot 30.24.0, sqlean.py 3.50.4.5). The compatibility suite runs only on the pinned
+  engine (Python >= 3.10); without it the comparisons are skipped, never run on another SQLite.
+- Removed the demo Lambda (`<name>-demo-lambda`, `demo_url`, the `auth_token` variable / `AuthToken`
+  parameter) from Terraform and CloudFormation: nobody needed it. The next `apply` deletes it.
+- `INSERT` / `UPDATE` / `DELETE … RETURNING` report their rowcount as sqlite3 does (was -1).
+- **One install**: `pip install s3rds` brings sqlglot (pinned `>=30.24,<31`, the release the report was verified
+  with); the `[mysql]` extra is gone (still accepted, installs nothing more).
+- Server: reflection PRAGMAs (`table_info`, `index_list`, `foreign_key_list`, …) no longer re-upload the
+  database.
+
 ## 0.1.2 — 2026-10-25
 
 MySQL dialect: 59% → 86% of the 99-feature compatibility matrix (`tests/compat/REPORT.md`).
