@@ -14,7 +14,7 @@
 
 Everything else stays: models, queries, cursors, transactions. For all of them: one writer at a time, every commit
 uploads the whole file (a few hundred ms), so keep a database under ~20 MB. Moving to RDS later is the same change
-backwards (`import pymysql`, `mysql+pymysql://`, `django.db.backends.mysql`). Refused features raise
+backwards (`import pymysql`, `import psycopg2`, `mysql+pymysql://`, `django.db.backends.mysql`). Refused features raise
 `NotSupportedError` — never silently different.
 
 ### The server: deploy once, ≈ $0 when idle
@@ -26,11 +26,11 @@ while nobody uses it. Deploy it once with Terraform or CloudFormation from the
 **Python drivers for [s3rds](https://github.com/cloudformer/s3rds) — a truly serverless RDS:
 a Lambda URL as your database endpoint, SQLite on S3, ≈ $0 when idle.**
 
-One install, one dependency (sqlglot, used only by `s3rds.pymysql`). Each driver is a submodule **named after the standard
+One install, one dependency (sqlglot, used only by `s3rds.pymysql` and `s3rds.psycopg2`). Each driver is a submodule **named after the standard
 client it mirrors**, so moving to a real database is a one-line import change and nothing else:
 
 ```bash
-pip install s3rds    # s3rds.sqlite, s3rds.pymysql, sqlite+s3rds:// for SQLAlchemy, ENGINE s3rds.sqlite for Django
+pip install s3rds    # s3rds.sqlite, s3rds.pymysql, s3rds.psycopg2, sqlite+s3rds:// for SQLAlchemy, ENGINE s3rds.sqlite for Django
 ```
 
 ```python
@@ -103,6 +103,7 @@ conversion in queries (keep `TIME_ZONE` equal to the connection's), `__regex`, `
   server (stale keep-alive connection). Timeouts raise an error with an explicit "result unknown".
 - `s3rds.pymysql` raises pymysql-style exceptions with MySQL error codes (1062, 1146, 1054, 1064, …);
   unsupported MySQL features raise `NotSupportedError` instead of misbehaving silently.
+- `s3rds.psycopg2` raises psycopg2's classes (`s3rds.psycopg2.errors.UniqueViolation`, …) with the SQLSTATE in `pgcode`.
 
 ## Versions
 

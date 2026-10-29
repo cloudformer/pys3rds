@@ -13,7 +13,7 @@
 | **psycopg2** | `import psycopg2` | `from s3rds import psycopg2` | PostgreSQL 在客户端翻译成 SQLite；`.extras` / `.errors` 与 psycopg2 同名；不支持锁、函数、序列、数组；BOOLEAN 返回 1 / 0 |
 
 其余都不变：模型、查询、游标、事务。共同点：同一时刻一个写者，每次提交都上传整个文件（几百毫秒），
-数据库保持在 ~20 MB 以内。以后迁 RDS 就是反向同样一处改动（`import pymysql`、`mysql+pymysql://`、
+数据库保持在 ~20 MB 以内。以后迁 RDS 就是反向同样一处改动（`import pymysql`、`import psycopg2`、`mysql+pymysql://`、
 `django.db.backends.mysql`）。被拒绝的功能抛 `NotSupportedError`——绝不悄悄变样。
 
 ### 服务端：一次部署，空闲 ≈ $0
@@ -103,7 +103,7 @@ aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
 ### 3. 程序连接
 
 ```bash
-pip install s3rds    # s3rds.sqlite、s3rds.pymysql(MySQL 由 sqlglot 在客户端翻译)、SQLAlchemy 用的 sqlite+s3rds://、Django 用的 ENGINE s3rds.sqlite
+pip install s3rds    # s3rds.sqlite、s3rds.pymysql / s3rds.psycopg2(MySQL / PostgreSQL 由 sqlglot 在客户端翻译)、SQLAlchemy 用的 sqlite+s3rds://、Django 用的 ENGINE s3rds.sqlite
 ```
 
 想写哪种方言就 import 哪个，API 都是 pymysql 形状；将来上真 RDS 就是最后一次 `import pymysql`：
@@ -111,6 +111,7 @@ pip install s3rds    # s3rds.sqlite、s3rds.pymysql(MySQL 由 sqlglot 在客户�
 ```python
 from s3rds import sqlite                            # SQLite 方言
 # from s3rds import pymysql                         # MySQL 方言(见下面「MySQL 方言」)
+# from s3rds import psycopg2                        # PostgreSQL 方言，psycopg2 的 API(见「PostgreSQL 方言」)
 
 conn = sqlite.connect(host="xxxx.lambda-url.us-east-2.on.aws",
                          user="admin", password="...", database="blog")
@@ -159,7 +160,7 @@ Django 的 SQLite 后端会注册约 35 个这样的函数：其中的日期函�
 （`TIME_ZONE` 保持和连接一致，默认 UTC）、`__regex`、`MD5` / `SHA*`、`LPad` / `RPad` / `Repeat` / `Reverse`、
 `order_by("?")`、`StdDev` / `Variance`、查询里的日期运算（`F("dt") + timedelta`、`F("end") - F("start")`）。
 
-只有一个依赖 sqlglot，只有 `s3rds.pymysql` 用到。线协议就是 HTTPS + JSON，任何语言都能接：
+只有一个依赖 sqlglot，只有 `s3rds.pymysql` 和 `s3rds.psycopg2` 用到。线协议就是 HTTPS + JSON，任何语言都能接：
 
 ```bash
 curl -s -u "admin:密码" -H "content-type: application/json" \
@@ -171,7 +172,7 @@ curl -s -u "admin:密码" -H "content-type: application/json" \
 
 兼容性矩阵是自动生成的，不是手写的：**[tests/compat/REPORT.md](tests/compat/REPORT.md)**。
 每一行是一项能力（DDL、DML、查询、函数、约束、元数据、类型），用同一条 SQL 在参照库——`s3rds.pymysql` 对
-Docker 里的 MySQL 8.0，`s3rds.sqlite` 对标准库 `sqlite3`，`sqlite+s3rds` 对跑在 `sqlite3` 上的 SQLAlchemy，
+Docker 里的 MySQL 8.0，`s3rds.psycopg2` 对 Docker 里的 PostgreSQL 16，`s3rds.sqlite` 对标准库 `sqlite3`，`sqlite+s3rds` 对跑在 `sqlite3` 上的 SQLAlchemy，
 `ENGINE: "s3rds.sqlite"` 对 Django 自带的 SQLite 后端——和 s3rds 上各跑一遍，比对结果、Python 类型、rowcount、lastrowid 和错误码。
 
 | 状态 | 含义 |
@@ -277,6 +278,32 @@ pytest tests/ -v
 **兼容性报告 —— [tests/compat/REPORT.md](tests/compat/REPORT.md)。** 上面每一项能力对应一个测试：同一条 SQL
 在 Docker 里的真 MySQL 8.0 和 s3rds 上各跑一遍，比对结果、Python 类型、rowcount、lastrowid 和错误码。
 verified 的可以放心用；gap 的标了哪个任务来修。每次运行自动重新生成（命令见上面[兼容性](#兼容性)一节）。
+
+## PostgreSQL 方言（`s3rds.psycopg2`）
+
+用 psycopg2 的 API 写 PostgreSQL，跑在同一个 endpoint 上。和 MySQL 方言一样在客户端翻译（sqlglot，按语句缓存）。
+子模块和 psycopg2 同名：`s3rds.psycopg2.extras`（`RealDictCursor`、`DictCursor`、`Json`、`execute_values`）、
+`.errors`（`UniqueViolation` 等，带 `pgcode`）、`.extensions`。
+
+```python
+from s3rds import psycopg2                       # 以后：import psycopg2
+from s3rds.psycopg2.extras import RealDictCursor
+
+conn = psycopg2.connect(host="xxxx.lambda-url.us-east-2.on.aws", dbname="blog", user="admin", password="...")
+with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:   # 和 psycopg2 一样 autocommit=False，`with conn` 提交
+    cur.execute("CREATE TABLE IF NOT EXISTS posts (id SERIAL PRIMARY KEY, title TEXT NOT NULL)")
+    cur.execute("INSERT INTO posts (title) VALUES (%s) RETURNING id", ["hello"])
+```
+
+- `%s` / `%(name)s`；`SERIAL` / `IDENTITY` 主键；`RETURNING`；`ON CONFLICT … DO UPDATE / DO NOTHING`；
+  `TRUNCATE … RESTART IDENTITY`；`BEGIN` / `START TRANSACTION` / `COMMIT` / `ROLLBACK`
+- `NUMERIC` → `Decimal`、`DATE` → `date`、`TIMESTAMP` → `datetime`；报错带 PostgreSQL 的 SQLSTATE（23505、42P01……）
+- 已知差距（任务 28、29）：`BOOLEAN` 返回 1 / 0、`LIKE` 不区分大小写、`x / 0` 得 NULL、
+  `::timestamp` / `::numeric` / `::text` 转换
+
+不支持的——抛 `NotSupportedError`（`errors.FeatureNotSupported`，0A000）：函数/触发器、`LISTEN` / `NOTIFY`、`COPY`、
+`SELECT … FOR UPDATE` / `LOCK`、角色/`GRANT`、序列、数组、扩展、临时表。对照 Docker 里的 PostgreSQL 16，
+结果见 [tests/compat/REPORT.md](tests/compat/REPORT.md)。
 
 ## 适用规模
 

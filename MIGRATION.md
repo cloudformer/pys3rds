@@ -1,4 +1,4 @@
-# Moving to RDS MySQL
+# Moving to RDS MySQL (or PostgreSQL)
 
 s3rds is for the long tail: small databases, idle most of the time, ≈ $0. When you outgrow it, a real
 MySQL is one import line away.
@@ -35,6 +35,9 @@ an ORM on MySQL, long transactions, sessions or row locks, or tools that speak t
    With Django, the settings are the change: `"ENGINE": "s3rds.sqlite"` → `"django.db.backends.mysql"`
    (HOST becomes the RDS endpoint, `pip install mysqlclient`), then `manage.py migrate` on MySQL and copy the data.
    What s3rds refused (`__regex`, time-zone conversion in queries, `order_by("?")`, …) works there.
+   With `s3rds.psycopg2`, the same steps on RDS PostgreSQL: `from s3rds import psycopg2` → `import psycopg2`
+   (`pip install psycopg2-binary`), security group on 5432, and copy the data with `pgloader <name>.sqlite
+   postgresql://…` instead of `sqlite3mysql`. What s3rds refused (locks, functions, sequences, arrays) works there.
 4. Move the password out of the var file into SSM Parameter Store, let RDS take the backups, and
    delete the stack: `terraform -chdir=terraform destroy -var-file=my.json`.
 
