@@ -50,16 +50,21 @@ def _compose(*args, capture=False):
 
 
 def _state(service):
-    """(state, health) of the service's container; (None, None) when there is none or no Docker at all."""
+    """(state, health) of the service's containers (compose-service may name several, space-separated): the first
+    one that is not running / healthy, else the first; (None, None) when one is missing or there is no Docker."""
+    names = service.split()
     try:
-        r = subprocess.run(COMPOSE + ["ps", "-a", "--format", "json", service], capture_output=True, text=True, timeout=20)
+        r = subprocess.run(COMPOSE + ["ps", "-a", "--format", "json"] + names, capture_output=True, text=True, timeout=20)
     except (OSError, subprocess.TimeoutExpired):
         return None, None
     text = r.stdout.strip()
     if r.returncode or not text:
         return None, None
     rows = json.loads(text) if text.startswith("[") else [json.loads(x) for x in text.splitlines() if x.strip()]
-    return (rows[0].get("State"), rows[0].get("Health") or "") if rows else (None, None)
+    if len(rows) < len(names):
+        return None, None
+    states = [(x.get("State"), x.get("Health") or "") for x in rows]
+    return next((s for s in states if s[0] != "running" or s[1] not in ("healthy", "")), states[0])
 
 
 def _say(config, text):
@@ -93,7 +98,7 @@ def _docker_setup(config):
     _say(config, f"\n--docker {mode}: {'using the running' if state == 'running' else 'starting'} {service}, "
                  f"waiting until it is healthy (up to {WAIT}s) ...")
     t0 = time.time()
-    if _compose("up", "-d", "--wait", "--wait-timeout", str(WAIT), service).returncode:
+    if _compose("up", "-d", "--wait", "--wait-timeout", str(WAIT), *service.split()).returncode:
         state, health = _state(service)
         pytest.exit(f"--docker {mode}: {service} is not healthy yet ({state}/{health or 'no health'}) and keeps "
                           f"starting; run the same command again in a minute (logs: docker compose -f "

@@ -10,7 +10,7 @@
 | **pymysql** | `import pymysql` | `from s3rds import pymysql` | MySQL is translated to SQLite on the client; no locks, procedures, triggers |
 | **SQLAlchemy** | `create_engine("sqlite:///app.db")` | `create_engine("sqlite+s3rds://user:pw@URL/app")` | Core and ORM unchanged; `regexp_match` is refused |
 | **Django** | `"ENGINE": "django.db.backends.sqlite3"` | `"ENGINE": "s3rds.sqlite"` + `HOST` / `USER` / `PASSWORD` | `__regex`, time-zone conversion in queries, `order_by("?")` are refused; run tests on sqlite3 |
-| **psycopg2** | `import psycopg2` | `from s3rds import psycopg2` — *planned, not available yet* | — |
+| **psycopg2** | `import psycopg2` | `from s3rds import psycopg2` | PostgreSQL is translated to SQLite on the client; `.extras` / `.errors` as psycopg2's; no locks, functions, sequences, arrays; BOOLEAN comes back as 1 / 0 |
 
 Everything else stays: models, queries, cursors, transactions. For all of them: one writer at a time, every commit
 uploads the whole file (a few hundred ms), so keep a database under ~20 MB. Moving to RDS later is the same change
@@ -59,7 +59,7 @@ conn.transaction([                                 # all-or-nothing, single S3 w
 |---|---|---|---|
 | `s3rds.sqlite` | SQLite (no translation) | pymysql-shaped API | available |
 | `s3rds.pymysql` | MySQL, translated on the client | pymysql | available |
-| `s3rds.psycopg2` | PostgreSQL | psycopg2 | placeholder; `connect()` raises until implemented |
+| `s3rds.psycopg2` | PostgreSQL, translated on the client | psycopg2 (`extras`, `errors`, `extensions`) | available |
 | `sqlite+s3rds://` | SQLite, written by SQLAlchemy | SQLAlchemy Core / ORM | available — the URL is the only change |
 | `ENGINE: "s3rds.sqlite"` | SQLite, written by Django | Django's SQLite backend | available — the database settings are the only change |
 

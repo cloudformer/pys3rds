@@ -10,7 +10,7 @@
 | **pymysql** | `import pymysql` | `from s3rds import pymysql` | MySQL 在客户端翻译成 SQLite；没有锁、存储过程、触发器 |
 | **SQLAlchemy** | `create_engine("sqlite:///app.db")` | `create_engine("sqlite+s3rds://user:pw@URL/app")` | Core 和 ORM 不变；`regexp_match` 被拒绝 |
 | **Django** | `"ENGINE": "django.db.backends.sqlite3"` | `"ENGINE": "s3rds.sqlite"` + `HOST` / `USER` / `PASSWORD` | `__regex`、查询里的时区转换、`order_by("?")` 被拒绝；测试跑在 sqlite3 上 |
-| **psycopg2** | `import psycopg2` | `from s3rds import psycopg2` —— *计划中，尚不可用* | — |
+| **psycopg2** | `import psycopg2` | `from s3rds import psycopg2` | PostgreSQL 在客户端翻译成 SQLite；`.extras` / `.errors` 与 psycopg2 同名；不支持锁、函数、序列、数组；BOOLEAN 返回 1 / 0 |
 
 其余都不变：模型、查询、游标、事务。共同点：同一时刻一个写者，每次提交都上传整个文件（几百毫秒），
 数据库保持在 ~20 MB 以内。以后迁 RDS 就是反向同样一处改动（`import pymysql`、`mysql+pymysql://`、
@@ -33,7 +33,7 @@
 | 维护窗口 | 无 | 有，会重启 | 有 | 有 |
 | SLA | Lambda 99.95% · S3 99.9% | 单 AZ 无 SLA | 99.95% | 99.99% |
 | 持久性 | S3，11 个 9 | EBS | EBS 复制 | 6 副本 |
-| SQL 兼容性 | SQLite 方言、经 `s3rds.pymysql` 的 MySQL 方言、经 `sqlite+s3rds://` 的 SQLAlchemy Core / ORM、经 `ENGINE: "s3rds.sqlite"` 的 Django ORM——见自动生成的[兼容性报告](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
+| SQL 兼容性 | SQLite 方言、经 `s3rds.pymysql` 的 MySQL 方言、经 `s3rds.psycopg2` 的 PostgreSQL 方言、经 `sqlite+s3rds://` 的 SQLAlchemy Core / ORM、经 `ENGINE: "s3rds.sqlite"` 的 Django ORM——见自动生成的[兼容性报告](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
 
 > 设计原则：这是一个关系型数据库，数据正确性第一——原子性、一致性不妥协，
 > 写入可以失败，但绝不重复、绝不写错。优势是省钱（闲时 ≈ $0），代价是性能一般。
@@ -296,7 +296,7 @@ verified 的可以放心用；gap 的标了哪个任务来修。每次运行自�
 
 ```
 src/db/           数据库本体:lambda_function.py(HTTP API)、s3_sqlite.py(引擎)、index.html(控制台)
-client/           pip 包 s3rds:s3rds/sqlite/(驱动;base.py 是 Django 后端)、s3rds/pymysql.py、s3rds/psycopg2.py、pyproject.toml
+client/           pip 包 s3rds:s3rds/sqlite/(驱动;base.py 是 Django 后端)、s3rds/pymysql.py、s3rds/psycopg2/、pyproject.toml
 terraform/        部署方式 A
 cloudformation/   部署方式 B
 tests/            正确性测试
@@ -310,14 +310,13 @@ CI（`.github/workflows/test.yml`）每次 push 跑全部测试（含 MySQL 对�
 
 ```bash
 # 改 client/pyproject.toml 和 client/s3rds/sqlite/__init__.py 的版本号,写 CHANGELOG,提交,然后
-git tag v0.2.1 && git push --tags      # 测试 → 构建 client/ → 发 PyPI(trusted publishing,不用 token)
+git tag v0.3.0 && git push --tags      # 测试 → 构建 client/ → 发 PyPI(trusted publishing,不用 token)
 ```
 
 ## 路线图
 
-待办在 [tests/compat/TASKS.md](tests/compat/TASKS.md)。已完成：打开的事务和 SQLAlchemy（0.2.0）、Django（0.2.1）。
-下一步（0.3.0）：`s3rds.psycopg2`（PostgreSQL 方言；占位模块已随包发布，`connect()` 在实现前会直接报错）和
-CloudFormation 一键 *Launch Stack* 按钮。
+待办在 [tests/compat/TASKS.md](tests/compat/TASKS.md)。已完成：打开的事务和 SQLAlchemy（0.2.0）、Django（0.2.1）、`s3rds.psycopg2`（0.3.0）。
+下一步：CloudFormation 一键 *Launch Stack* 按钮。
 
 ## Redefine Serverless 系列
 

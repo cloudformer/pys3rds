@@ -10,7 +10,7 @@
 | **pymysql** | `import pymysql` | `from s3rds import pymysql` | MySQL is translated to SQLite on the client; no locks, procedures, triggers |
 | **SQLAlchemy** | `create_engine("sqlite:///app.db")` | `create_engine("sqlite+s3rds://user:pw@URL/app")` | Core and ORM unchanged; `regexp_match` is refused |
 | **Django** | `"ENGINE": "django.db.backends.sqlite3"` | `"ENGINE": "s3rds.sqlite"` + `HOST` / `USER` / `PASSWORD` | `__regex`, time-zone conversion in queries, `order_by("?")` are refused; run tests on sqlite3 |
-| **psycopg2** | `import psycopg2` | `from s3rds import psycopg2` — *planned, not available yet* | — |
+| **psycopg2** | `import psycopg2` | `from s3rds import psycopg2` | PostgreSQL is translated to SQLite on the client; `.extras` / `.errors` as psycopg2's; no locks, functions, sequences, arrays; BOOLEAN comes back as 1 / 0 |
 
 Everything else stays: models, queries, cursors, transactions. For all of them: one writer at a time, every commit
 uploads the whole file (a few hundred ms), so keep a database under ~20 MB. Moving to RDS later is the same change
@@ -35,7 +35,7 @@ Same as any driver needs its database.
 | Maintenance window | none | yes, with restarts | yes | yes |
 | SLA | Lambda 99.95% · S3 99.9% | none for single-AZ | 99.95% | 99.99% |
 | Durability | S3, 11 nines | EBS | EBS, replicated | 6 copies |
-| SQL compatibility | SQLite dialect, MySQL dialect via `s3rds.pymysql`, SQLAlchemy Core / ORM via `sqlite+s3rds://`, Django ORM via `ENGINE: "s3rds.sqlite"` — see the generated [compatibility report](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
+| SQL compatibility | SQLite dialect, MySQL dialect via `s3rds.pymysql`, PostgreSQL dialect via `s3rds.psycopg2`, SQLAlchemy Core / ORM via `sqlite+s3rds://`, Django ORM via `ENGINE: "s3rds.sqlite"` — see the generated [compatibility report](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
 
 > Design principle: this is a relational database, so correctness comes first — atomicity and
 > consistency are not negotiable. A write may fail, but it never duplicates and never corrupts.
@@ -313,7 +313,7 @@ Write throughput is a few per second. Good for personal apps, internal tools, bl
 
 ```
 src/db/           the database: lambda_function.py (HTTP API), s3_sqlite.py (engine), index.html (console)
-client/           the pip package s3rds: s3rds/sqlite/ (driver; base.py = the Django backend), s3rds/pymysql.py, s3rds/psycopg2.py, pyproject.toml
+client/           the pip package s3rds: s3rds/sqlite/ (driver; base.py = the Django backend), s3rds/pymysql.py, s3rds/psycopg2/, pyproject.toml
 terraform/        deployment, option A
 cloudformation/   deployment, option B
 tests/            correctness guarantees
@@ -327,15 +327,13 @@ CI (`.github/workflows/test.yml`) runs the whole suite, MySQL included, on every
 
 ```bash
 # bump version in client/pyproject.toml and client/s3rds/sqlite/__init__.py, add the CHANGELOG entry, commit, then
-git tag v0.2.1 && git push --tags      # tests → build client/ → PyPI (trusted publishing, no token)
+git tag v0.3.0 && git push --tags      # tests → build client/ → PyPI (trusted publishing, no token)
 ```
 
 ## Roadmap
 
 Open work is tracked in [tests/compat/TASKS.md](tests/compat/TASKS.md). Done: open transactions and SQLAlchemy
-(0.2.0), Django (0.2.1). Next, 0.3.0: `s3rds.psycopg2` (PostgreSQL dialect; the placeholder module ships today and
-`connect()` raises until implemented) and a one-click CloudFormation
-*Launch Stack* button.
+(0.2.0), Django (0.2.1), `s3rds.psycopg2` (0.3.0). Next: a one-click CloudFormation *Launch Stack* button.
 
 ## The Redefine Serverless series
 

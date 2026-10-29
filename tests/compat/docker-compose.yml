@@ -1,6 +1,7 @@
 # Real databases for the compatibility tests.
 #   docker compose -f tests/compat/docker-compose.yml up -d
-#   MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat python3 -m pytest tests/compat -v
+#   MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat PG_DSN=postgresql://postgres:test@127.0.0.1:5433/compat \
+#     python3 -m pytest tests/compat -v
 name: s3rds-compat   # unique per project, so the series' compat containers never mix
 services:
   mysql:
@@ -14,9 +15,13 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ptest"]
       interval: 5s
       retries: 20
-  postgres:                      # for s3rds.psycopg2, once it exists
-    image: postgres:16
+  postgres:                      # for s3rds.psycopg2
+    image: postgres:16.4
     environment:
       POSTGRES_PASSWORD: test
       POSTGRES_DB: compat
     ports: ["5433:5432"]   # 5433: 5432 is often taken by a local PostgreSQL
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "compat"]
+      interval: 5s
+      retries: 20

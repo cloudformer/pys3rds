@@ -203,7 +203,12 @@ def test_drop_index_on_and_truncate(conn):
     assert conn.query("SELECT id FROM t") == [{"id": 1}]    # AUTO_INCREMENT was reset, like MySQL
 
 
-def test_psycopg2_placeholder_raises():
-    with pytest.raises(s3rds.psycopg2.NotSupportedError):
-        s3rds.psycopg2.connect(host="x", user="u", password="p", dbname="d")
+def test_psycopg2_connect_and_refusals():
+    pg = s3rds.psycopg2
+    c = pg.connect("postgresql://u:p@x.lambda-url.us-east-2.on.aws/blog?sslmode=require")
+    assert (c.database, c.autocommit) == ("blog", False)          # psycopg2's default: transactions
+    assert pg.connect("host=x dbname=d user=u").database == "d"
+    with pytest.raises(pg.errors.FeatureNotSupported) as e:
+        c.cursor().execute("SELECT 1 FOR UPDATE")
+    assert e.value.pgcode == "0A000" and isinstance(e.value, pg.NotSupportedError)
 

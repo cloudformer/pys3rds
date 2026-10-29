@@ -1,6 +1,21 @@
 # Changelog
 
-## Unreleased (0.2.1)
+## 0.3.0 — 2026-10-29
+
+PostgreSQL dialect. No server redeploy needed.
+
+- **`s3rds.psycopg2`**: `from s3rds import psycopg2`, later `import psycopg2`. psycopg2's API: `connect(dsn)` or
+  `connect(host=, dbname=, user=, password=)`, `autocommit=False` by default, `with conn:` commits / rolls back,
+  `%s` / `%(name)s`. Submodules named as psycopg2's: `extras` (`RealDictCursor`, `DictCursor`, `Json`,
+  `execute_values`, `execute_batch`), `errors` (`UniqueViolation`, … with `pgcode`), `extensions` (`parse_dsn`).
+  PostgreSQL is translated to SQLite by sqlglot; `SERIAL` / `IDENTITY` primary keys, `RETURNING`, `ON CONFLICT`,
+  `TRUNCATE … RESTART IDENTITY`, `START TRANSACTION`; NUMERIC / DATE / TIMESTAMP come back as Decimal / date / datetime.
+  Refused with `NotSupportedError`: functions / triggers, LISTEN / NOTIFY, COPY, locks, roles, sequences, arrays,
+  temporary tables. Compared with PostgreSQL 16.4 in Docker in `tests/compat/test_postgres.py`; gaps: tasks 28, 29.
+- Tests: `compose-service` may name several containers (`"mysql postgres"`), in `compat_docker.py` and the shared
+  workflow.
+
+## 0.2.1
 
 Django. Server redeploy required (connection settings sent with every request); with an old server, Django's
 schema editor stops with "foreign key constraint checks are enabled" instead of rebuilding a table unsafely.

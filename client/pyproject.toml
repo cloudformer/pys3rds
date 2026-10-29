@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "s3rds"
-version = "0.2.1"
-description = "A truly serverless RDS on your own AWS account: Lambda URL endpoint, SQLite on S3, ≈ $0 when idle. Drivers named after the standard clients: s3rds.sqlite, s3rds.pymysql; SQLAlchemy via sqlite+s3rds://, Django via ENGINE s3rds.sqlite."
+version = "0.3.0"
+description = "A truly serverless RDS on your own AWS account: Lambda URL endpoint, SQLite on S3, ≈ $0 when idle. Drivers named after the standard clients: s3rds.sqlite, s3rds.pymysql, s3rds.psycopg2; SQLAlchemy via sqlite+s3rds://, Django via ENGINE s3rds.sqlite."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [{ name = "Frank Zhang" }]
-keywords = ["serverless", "rds", "sqlite", "s3", "lambda", "database", "pymysql", "dbapi", "sqlalchemy", "django"]
+keywords = ["serverless", "rds", "sqlite", "s3", "lambda", "database", "pymysql", "psycopg2", "postgresql", "dbapi", "sqlalchemy", "django"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
@@ -22,7 +22,7 @@ classifiers = [
   "Topic :: Database",
   "Topic :: Database :: Front-Ends",
 ]
-# one install for every driver. sqlglot: s3rds.pymysql's MySQL -> SQLite translation, imported only when a MySQL
+# one install for every driver. sqlglot: s3rds.pymysql's / s3rds.psycopg2's MySQL / PostgreSQL -> SQLite translation, imported only when a MySQL
 # statement is translated; pinned to the release the compatibility report was verified with (translations
 # change between releases). SQLAlchemy is not a dependency: the applications that use sqlite+s3rds:// have it.
 dependencies = ["sqlglot>=30.24,<31"]
@@ -44,7 +44,7 @@ Changelog = "https://github.com/cloudformer/s3rds/blob/main/CHANGELOG.md"
 Issues = "https://github.com/cloudformer/s3rds/issues"
 
 [tool.setuptools]
-packages = ["s3rds", "s3rds.sqlite"]
+packages = ["s3rds", "s3rds.sqlite", "s3rds.psycopg2"]
 
 # The versions tests/compat/REPORT.md was verified with; README.md, README.zh.md and client/README.md state the same.
 [tool.s3rds.verified]
@@ -56,3 +56,5 @@ sqlglot = "30.24.0"
 sqlalchemy = "2.0.55"
 django = "6.1.2"
 mysql_reference = "8.0.46"         # tests/compat/docker-compose.yml
+postgres_reference = "16.4"       # the same
+psycopg2 = "2.9.12"                # the reference client (psycopg2-binary)

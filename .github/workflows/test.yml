@@ -8,6 +8,6 @@ jobs:
   test:
     uses: cloudformer/redefine-aws-serverless-workflow/.github/workflows/reusable-test.yml@main
     with:
-      install: "pytest boto3 pymysql sqlglot==30.24.0 sqlalchemy==2.0.55 django==6.1.2 sqlean.py==3.50.4.5"
-      compose-service: "mysql"
-      test-env: "MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat"
+      install: "pytest boto3 pymysql psycopg2-binary==2.9.12 sqlglot==30.24.0 sqlalchemy==2.0.55 django==6.1.2 sqlean.py==3.50.4.5"
+      compose-service: "mysql postgres"
+      test-env: "MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat PG_DSN=postgresql://postgres:test@127.0.0.1:5433/compat"

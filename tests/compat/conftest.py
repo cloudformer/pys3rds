@@ -18,6 +18,7 @@ import pytest
 import lambda_function as lf
 from s3_sqlite import sqlite3 as ENGINE   # the server's SQLite module: sqlean (pinned) on Lambda
 import s3rds
+from s3rds import psycopg2 as s3pg
 from s3rds import pymysql as s3mysql
 from s3rds import sqlite as s3sqlite
 
@@ -55,7 +56,7 @@ def run_step(conn, dict_cursor, sql, params):
             rows = [dict(r) for r in cur.fetchall()] if cur.description else None
             return Outcome(rows, cur.rowcount, cur.lastrowid, None)
     except Exception as e:  # noqa: BLE001 - we compare whatever each side raises
-        code = e.args[0] if e.args and isinstance(e.args[0], int) else None
+        code = getattr(e, "pgcode", None) or (e.args[0] if e.args and isinstance(e.args[0], int) else None)
         return Outcome(None, None, None, (type(e).__name__, code))
 
 
@@ -155,7 +156,11 @@ def s3_mysql(deployed, fake_s3, monkeypatch, bucket):
 @pytest.fixture
 def mysql_pair(real_mysql, s3_mysql):
     """(run_on_both) -> executes a script on both sides and compares step by step."""
-    (real, real_cur), (ours, ours_cur) = real_mysql, s3_mysql
+    return _pair(real_mysql, s3_mysql, "MySQL")
+
+
+def _pair(real_side, our_side, name):
+    (real, real_cur), (ours, ours_cur) = real_side, our_side
     dry = real is None
 
     def both(sql, params=()):
@@ -175,8 +180,9 @@ def mysql_pair(real_mysql, s3_mysql):
     def unsupported(sql, params=()):
         """MySQL runs it; s3rds must refuse it with NotSupportedError (never silently do something else)."""
         r, o = both(sql, params)
-        assert dry or r.error is None, f"reference MySQL rejected the statement itself: {r.error}"
-        assert o.error and o.error[0] == "NotSupportedError", f"{sql}\n  s3rds did not refuse: {o.error or o.rows}"
+        assert dry or r.error is None, f"reference {name} rejected the statement itself: {r.error}"
+        assert o.error and o.error[0] in ("NotSupportedError", "FeatureNotSupported"), \
+            f"{sql}\n  s3rds did not refuse: {o.error or o.rows}"   # psycopg2 raises 0A000 as FeatureNotSupported
     run.unsupported = unsupported
 
     def many(sql, seq):
@@ -189,6 +195,55 @@ def mysql_pair(real_mysql, s3_mysql):
         assert len(set(counts)) == 1, f"executemany rowcount real={counts[0]} s3rds={counts[-1]}"
     run.many = many
     return run
+
+
+# ---- PostgreSQL side (the same harness; errors compare class name + SQLSTATE) ----
+
+@pytest.fixture
+def real_postgres():
+    dsn = os.environ.get("PG_DSN")
+    if not dsn and os.environ.get("COMPAT_DRY"):
+        yield None, None
+        return
+    if not dsn:
+        pytest.skip("set PG_DSN (see tests/compat/docker-compose.yml) to run against a real PostgreSQL")
+    psycopg2 = pytest.importorskip("psycopg2")
+    import psycopg2.extras
+    conn = psycopg2.connect(dsn)
+    conn.autocommit = True
+    if not compat_report.versions["postgres"]:
+        with conn.cursor() as cur:
+            cur.execute("SHOW server_version")
+            compat_report.versions["postgres"] = f"PostgreSQL {cur.fetchone()[0]} (Docker)"
+    yield conn, psycopg2.extras.RealDictCursor
+    conn.close()
+
+
+@pytest.fixture
+def s3_postgres(deployed, fake_s3, monkeypatch, bucket):
+    if deployed:
+        c = s3pg.connect(host=deployed["url"], user=deployed["user"], password=deployed["password"], dbname="compat")
+    else:
+        c = in_process(s3pg, fake_s3, monkeypatch, bucket)
+    c.autocommit = True
+    yield c, s3pg.extras.RealDictCursor
+    c.close()
+
+
+class _ByFactory:
+    """psycopg2's cursor() takes the cursor class as cursor_factory= (its first argument is a name)."""
+    def __init__(self, conn):
+        self._conn = conn
+
+    def cursor(self, cls=None):
+        return self._conn.cursor(cursor_factory=cls)
+
+
+@pytest.fixture
+def pg_pair(real_postgres, s3_postgres):
+    """The same as mysql_pair: pg_pair(script), .both(sql), .unsupported(sql), .many(sql, seq)."""
+    (real, real_cur), (ours, ours_cur) = real_postgres, s3_postgres
+    return _pair((real and _ByFactory(real), real_cur), (_ByFactory(ours), ours_cur), "PostgreSQL")
 
 
 # ---- SQLite side (no Docker: the reference is the server's pinned SQLite module, called directly) ----

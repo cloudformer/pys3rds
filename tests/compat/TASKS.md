@@ -13,6 +13,8 @@ The numbers [REPORT.md](REPORT.md) refers to in its gap notes.
 | 22 | `UPDATE` / `DELETE … ORDER BY LIMIT`: the server's SQLite (sqlean.py 3.50.4) is built without ENABLE_UPDATE_DELETE_LIMIT. Fix by translating to a subquery on the rowid. (`GROUP_CONCAT(… ORDER BY …)` works since the server ships SQLite 3.50.4.) |
 | 5 | `strict=True` connection option: refuse any statement the translator does not recognise instead of best-effort |
 | 19 | Lambda timeout 15 s → 30 s (terraform + CloudFormation) |
+| 28 | `s3rds.psycopg2`: BOOLEAN as `bool` (columns and predicates; SQLite returns 1 / 0) |
+| 29 | `s3rds.psycopg2`: PostgreSQL semantics sqlglot does not give: case-sensitive `LIKE`, division by zero raises 22012, `::timestamp` / `::numeric` / `::text` casts; then `date_trunc` / `extract` / intervals, `information_schema`, `DELETE … USING` |
 
 Permanent, not tasks: ⚪ quirks (documented MySQL behaviour we do not imitate) and ⛔ unsupported
 (row / table locks, triggers, procedures, user variables, FULLTEXT, users / GRANT, partitions).
@@ -21,6 +23,7 @@ Permanent, not tasks: ⚪ quirks (documented MySQL behaviour we do not imitate) 
 
 | task | what | release |
 |---|---|---|
+| 30 | `s3rds.psycopg2`: PostgreSQL dialect (`tests/compat/test_postgres.py`, PostgreSQL 16.4 in Docker) | 0.3.0 |
 | 24 | Django `ENGINE: "s3rds.sqlite"` (`client/s3rds/sqlite/base.py`, `tests/compat/test_django.py`): Django's SQLite backend on the driver, date functions in `strftime()`, connection PRAGMAs per request; `s3rds.pymysql` `START TRANSACTION` / `COMMIT` / `ROLLBACK` | 0.2.1 |
 | 23 | `s3rds.sqlite` `autocommit=False` (open transactions replayed on the server, `/replay`) and SQLAlchemy `sqlite+s3rds://` (`tests/compat/test_sqlalchemy.py`) | 0.2.0 |
 | 21 | CHANGELOG entry for 0.2.0 | 0.2.0 |

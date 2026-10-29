@@ -13,7 +13,7 @@ REPORT = os.path.join(os.path.dirname(__file__), "compat", "REPORT.md")
 
 features = {}   # nodeid -> {"suite", "feature", "gap"}
 outcomes = {}   # nodeid -> "verified" | "gap" | "regression" | "fixed" | "not run"
-versions = {"mysql": None, "sqlalchemy": None, "django": None}
+versions = {"mysql": None, "postgres": None, "sqlalchemy": None, "django": None}
 suite = {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0}  # every test in the run
 
 STATUS = {"verified": "✅", "gap": "❌ gap", "regression": "🔴 regression", "fixed": "🟡 fixed",
@@ -35,7 +35,7 @@ def pytest_collection_modifyitems(items):
         nodeid = item.nodeid.replace(os.sep, "/")
         if "tests/compat/" not in nodeid:
             continue
-        kind = ("mysql" if "test_mysql" in nodeid else "sqlalchemy" if "test_sqlalchemy" in nodeid else
+        kind = ("mysql" if "test_mysql" in nodeid else "postgres" if "test_postgres" in nodeid else "sqlalchemy" if "test_sqlalchemy" in nodeid else
                 "django" if "test_django" in nodeid else "sqlite" if "test_sqlite" in nodeid else None)
         if not kind:
             continue
@@ -125,6 +125,8 @@ def render():
         f"Open tasks: {_open_tasks()} — see [TASKS.md](TASKS.md).", "",
     ]
     for kind, title, ref in [("mysql", f"s3rds.pymysql ({compat_aws.target()}) vs MySQL", versions["mysql"] or "MySQL (not run)"),
+                             ("postgres", f"s3rds.psycopg2 ({compat_aws.target()}) vs PostgreSQL",
+                              versions["postgres"] or "PostgreSQL (not run)"),
                              ("sqlite", "s3rds.sqlite vs sqlite3", engine),
                              ("sqlalchemy", "SQLAlchemy sqlite+s3rds vs SQLAlchemy on sqlite3",
                               f"{versions['sqlalchemy'] or 'SQLAlchemy (not run)'} on {engine}"),
@@ -168,7 +170,7 @@ def pytest_terminal_summary(terminalreporter):
     if not _ran():
         return
     terminalreporter.section("s3rds compatibility")
-    for kind in ("mysql", "sqlite", "sqlalchemy", "django"):
+    for kind in ("mysql", "postgres", "sqlite", "sqlalchemy", "django"):
         terminalreporter.write_line(f"{kind:10s} {_counts(kind)}")
     terminalreporter.write_line(f"open tasks: {_open_tasks()}  (tests/compat/TASKS.md)")
     terminalreporter.write_line(f"report: {os.path.relpath(REPORT)}")
