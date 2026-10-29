@@ -1,6 +1,6 @@
 # s3rds compatibility report · [tasks](TASKS.md)
 
-Generated 2026-10-28 by `pytest tests` · s3rds 0.3.0 · sqlglot 30.24.0 · Python 3.13.7
+Generated 2026-10-28 by `pytest tests` · s3rds 0.2.1 · sqlglot 30.24.0 · Python 3.13.7
 
 Each row is one feature exercised with the same SQL on the reference database and on s3rds; results, Python types, rowcount, lastrowid and error codes must match. The feature list only grows (a removed case would show in git), so the support percentage can only move up.
 
@@ -8,7 +8,7 @@ Whole test run: **237 passed**, 0 failed, 5 expected failures (known gaps), 1 sk
 
 Open tasks: task 22 (1) — see [TASKS.md](TASKS.md).
 
-## s3rds.pymysql (lambda_handler in-process) vs MySQL — reference: MySQL 8.0.46 (Docker)
+## s3rds.pymysql (deployed Lambda https://fv6zi4zg3qnt6q4n2yitsq3lza0refke.lambda-url.us-east-2.on.aws/) vs MySQL — reference: MySQL 8.0.46 (Docker)
 
 **Support 90%** (90 / 99 features) · 1 gap · 5 quirk · 8 unsupported · 85 verified
 
