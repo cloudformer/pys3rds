@@ -4,6 +4,7 @@ session and s3rds does not: S3 is written once per commit and never by a look in
 conflicting writer fails the transaction instead of being overwritten, an old server is refused safely."""
 import base64
 import json
+import warnings
 
 import pytest
 
@@ -26,9 +27,9 @@ def connect(fake_s3, monkeypatch, bucket):
     monkeypatch.setattr(lf, "BUCKET", bucket)
     monkeypatch.setattr(lf, "READONLY", False)
 
-    def make(autocommit=True):
+    def make(autocommit=True, **kw):
         c = sqlite.connect(host="in-process.test", user="admin", password="pw", database="d",
-                           autocommit=autocommit)
+                           autocommit=autocommit, **kw)
 
         def post(path, payload):
             status, data = _handler(path, payload)
@@ -159,6 +160,78 @@ def test_an_old_server_refuses_instead_of_committing(connect, monkeypatch):
         tx.execute("INSERT INTO t (v) VALUES (?)", ["a"])
 
 
+def test_begin_opens_a_transaction_in_autocommit_mode(connect, fake_s3):
+    tx, other = connect(), connect()                     # isolation_level None: Django's atomic() sends BEGIN
+    puts = fake_s3.puts
+    tx.execute("BEGIN")
+    tx.execute("INSERT INTO t (v) VALUES (?)", ["a"])
+    with tx.cursor() as cur:
+        cur.executemany("INSERT INTO t (v) VALUES (?)", [["b"], ["c"]])
+    assert tx.in_transaction and values(tx) == ["a", "b", "c"] and values(other) == []
+    tx.commit()
+    assert values(other) == ["a", "b", "c"] and fake_s3.puts == puts + 1
+    tx.execute("BEGIN")
+    tx.execute("INSERT INTO t (v) VALUES (?)", ["gone"])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")                   # discarding an open transaction is not a lost write
+        tx.rollback()
+    assert values(other) == ["a", "b", "c"]
+    tx.execute("INSERT INTO t (v) VALUES (?)", ["d"])   # autocommit again: runs on its own
+    assert not tx.in_transaction and values(other)[-1] == "d"
+
+
+def test_connection_pragmas_travel_with_every_request(connect):
+    c, other = connect(), connect()
+    c.execute("CREATE TABLE child (id INTEGER PRIMARY KEY, t_id INTEGER REFERENCES t (id))")
+    assert c.query("PRAGMA foreign_keys") == [{"foreign_keys": 1}]       # the server's default
+    c.execute("PRAGMA foreign_keys = OFF")
+    assert c.query("PRAGMA foreign_keys") == [{"foreign_keys": 0}]
+    c.execute("INSERT INTO child (t_id) VALUES (42)")                   # not enforced on this connection
+    with pytest.raises(sqlite.IntegrityError):
+        other.execute("INSERT INTO child (t_id) VALUES (43)")            # still enforced on the other
+    c.execute("BEGIN")
+    c.execute("PRAGMA foreign_keys = ON")                                # as sqlite3: no effect inside a transaction
+    c.execute("INSERT INTO child (t_id) VALUES (44)")
+    with pytest.raises(sqlite.NotSupportedError):
+        c.execute("PRAGMA legacy_alter_table = ON")
+    c.commit()
+    assert c.query("PRAGMA foreign_keys") == [{"foreign_keys": 0}]
+    c.execute("PRAGMA foreign_keys(1)")
+    with pytest.raises(sqlite.IntegrityError):
+        c.execute("INSERT INTO child (t_id) VALUES (45)")
+    with pytest.raises(sqlite.OperationalError, match="unknown value"):
+        c.execute("PRAGMA foreign_keys = maybe")
+
+
+def test_the_server_applies_only_known_connection_pragmas(connect):
+    connect()
+    for pragmas in ({"journal_mode": 1}, {"foreign_keys": 2}, {"foreign_keys": True}, ["foreign_keys"]):
+        status, data = _handler("/api/db/d/query", {"sql": "SELECT 1", "pragmas": pragmas})
+        assert status == 400, pragmas
+
+
+def test_pragma_reads_are_not_replayed(connect):
+    tx = connect(autocommit=False)
+    tx.execute("INSERT INTO t (v) VALUES (?)", ["a"])
+    tx.execute("PRAGMA table_info(t)")
+    tx.execute("PRAGMA foreign_keys")
+    assert [s["sql"] for s in tx._tx["log"]] == ["INSERT INTO t (v) VALUES (?)"]
+
+
+def test_qmark_paramstyle_leaves_percent_alone(connect):
+    c = connect(paramstyle="qmark")                      # SQLAlchemy and Django write SQLite's own SQL
+    c.execute("INSERT INTO t (v) VALUES ('100%%'), (?)", ["%s"])
+    assert values(c) == ["100%%", "%s"]
+    assert c.query("SELECT 7 % 4 AS m") == connect().query("SELECT 7 %% 4 AS m") == [{"m": 3}]  # format: %% is %
+
+
+def test_getlimit(connect):
+    c = connect()
+    assert c.getlimit(sqlite.SQLITE_LIMIT_VARIABLE_NUMBER) == 32766 and c.getlimit(sqlite.SQLITE_LIMIT_COLUMN) == 2000
+    with pytest.raises(sqlite.ProgrammingError):
+        c.getlimit(0)
+
+
 # ---- the server's /replay route ----
 
 def test_replay_route_never_uploads_and_checks_the_base(connect, fake_s3):
@@ -190,7 +263,7 @@ def test_sqlalchemy_url_and_conflict(connect, monkeypatch):
     dialect = url.get_dialect()()
     assert dialect.create_connect_args(url) == ([], {
         "host": "abc.lambda-url.us-east-2.on.aws", "user": "admin", "password": "p@ss",
-        "database": "blog", "autocommit": False})
+        "database": "blog", "autocommit": False, "paramstyle": "qmark"})
 
     engine = sa.create_engine("sqlite+s3rds://admin:pw@in-process.test/d",
                               creator=lambda: connect(autocommit=False))

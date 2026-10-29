@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased (0.3.0)
+
+Django. Server redeploy required (connection settings sent with every request); with an old server, Django's
+schema editor stops with "foreign key constraint checks are enabled" instead of rebuilding a table unsafely.
+
+- **Django** (ORM, `atomic()`, savepoints, `migrate`): `DATABASES = {"default": {"ENGINE": "s3rds.sqlite", "NAME": …,
+  "HOST": "<lambda-url>", "USER": …, "PASSWORD": …}}`. Django's own SQLite backend with `s3rds.sqlite` as its driver
+  (`s3rds/sqlite/base.py`; `s3rds.sqlite` is now a package). Its date functions (`__year`, `__date`, `Trunc`,
+  `Extract`, `dates()`), Python functions on a sqlite3 connection, are written in SQLite's `strftime()`; the other
+  Python functions raise `NotSupportedError`: time-zone conversion in queries, `__regex`, `MD5` / `SHA*`, `LPad` /
+  `RPad` / `Repeat` / `Reverse` / `Cot`, `order_by("?")`, `StdDev` / `Variance`, date arithmetic in the query.
+  Compared with Django's SQLite backend in `tests/compat/test_django.py`. Extra `pip install "s3rds[django]"`
+  (Django 6.1, tested on 6.1.2).
+- **Connection PRAGMAs**: `PRAGMA foreign_keys = ON / OFF` and `PRAGMA legacy_alter_table` are kept by the driver
+  per connection, as sqlite3 does, and applied by the server to every request (`pragmas` in the request body).
+- `BEGIN` opens a transaction in autocommit mode too (sqlite3 with `isolation_level=None`; Django's `atomic()`);
+  `rollback()` of an open transaction no longer warns about earlier autocommit writes.
+- `s3rds.pymysql`: `START TRANSACTION` / `BEGIN` … `COMMIT` / `ROLLBACK` statements (three more verified rows in the MySQL report), DDL inside
+  the transaction commits it first, as MySQL does.
+- `connect(paramstyle="qmark")`: SQLite's own SQL, `%` left alone; the SQLAlchemy dialect uses it (a literal `%%`
+  or `%s` in SQLAlchemy's SQL was rewritten before).
+- `Connection.getlimit()` for `SQLITE_LIMIT_VARIABLE_NUMBER` / `SQLITE_LIMIT_COLUMN`.
+- `sqlite_version` reports the server's engine, 3.50.4 (0.2.0 still said 3.40.0).
+- PRAGMAs that read (`table_info`, `foreign_keys`, …) inside a transaction are not replayed.
+
 ## 0.2.0 — 2026-10-27
 
 SQLAlchemy and open transactions. Server redeploy required (new `/replay` route); with an old server,

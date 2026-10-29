@@ -3,7 +3,7 @@
 s3rds is for the long tail: small databases, idle most of the time, ≈ $0. When you outgrow it, a real
 MySQL is one import line away.
 
-**When:** a database approaches tens of MB, writes arrive several times a second, you need Django or
+**When:** a database approaches tens of MB, writes arrive several times a second, you need
 an ORM on MySQL, long transactions, sessions or row locks, or tools that speak the MySQL protocol (Workbench, DMS, Redshift federation).
 
 1. Create the RDS MySQL 8.0 instance (db.t4g.micro is ≈ $12 / month in us-east-2 plus gp3 storage).
@@ -31,6 +31,10 @@ an ORM on MySQL, long transactions, sessions or row locks, or tools that speak t
    `mysql+pymysql://user:pw@<rds-endpoint>/<db>`. Models and queries stay; create the schema on MySQL
    with `metadata.create_all()` or your Alembic migrations (MySQL needs a length on `String` columns),
    then copy the data as in step 2.
+
+   With Django, the settings are the change: `"ENGINE": "s3rds.sqlite"` → `"django.db.backends.mysql"`
+   (HOST becomes the RDS endpoint, `pip install mysqlclient`), then `manage.py migrate` on MySQL and copy the data.
+   What s3rds refused (`__regex`, time-zone conversion in queries, `order_by("?")`, …) works there.
 4. Move the password out of the var file into SSM Parameter Store, let RDS take the backups, and
    delete the stack: `terraform -chdir=terraform destroy -var-file=my.json`.
 

@@ -6,13 +6,14 @@ The numbers [REPORT.md](REPORT.md) refers to in its gap notes.
 
 | task | what |
 |---|---|
-| 18 | `s3rds.pymysql` transactions: `autocommit=False` and `START TRANSACTION` / `COMMIT` / `ROLLBACK` statements, on the open transactions of task 23 (pymysql opens one on any statement, sqlite3 only on writes) — **0.2.0** |
-| 23 | `s3rds.sqlite` `autocommit=False` (open transactions replayed on the server, `/replay`) and SQLAlchemy `sqlite+s3rds://` (`tests/compat/test_sqlalchemy.py`) — **0.2.0**, done in code, waiting for the first full run |
-| 24 | Django: a database backend on `s3rds.sqlite`; its SQLite backend registers ~40 Python functions on the connection, which would have to exist on the server — evaluate before starting |
+| 18 | `s3rds.pymysql` `autocommit=False` (pymysql opens a transaction on any statement, sqlite3 only on writes), on the open transactions of task 23. `START TRANSACTION` / `COMMIT` / `ROLLBACK` statements and DDL's implicit commit: done in code for 0.3.0, waiting for the first full run |
+| 24 | Django `ENGINE: "s3rds.sqlite"` (`client/s3rds/sqlite/base.py`, `tests/compat/test_django.py`): Django's SQLite backend on the driver, date functions in `strftime()`, connection PRAGMAs per request (server redeploy) — **0.3.0**, done in code, waiting for the first full run |
+| 25 | Django: time-zone conversion in date functions (`USE_TZ` with a current time zone other than the connection's) and date arithmetic in queries (`F("dt") + timedelta`, `F("end") - F("start")`) — Python functions in Django's backend, ⛔ today; evaluate SQLite-only forms (fixed offsets, `julianday` / `unixepoch` with exact microseconds) against Django's results |
+| 26 | Django 5.2 LTS: run `tests/compat/test_django.py` on 5.2.x (Python ≥ 3.10) and widen the `django` extra if it passes |
+| 27 | Django test databases (`manage.py test` with ENGINE `s3rds.sqlite`): create / empty `test_<NAME>` through the driver; refused today |
 | 22 | `UPDATE` / `DELETE … ORDER BY LIMIT`: the server's SQLite (sqlean.py 3.50.4) is built without ENABLE_UPDATE_DELETE_LIMIT. Fix by translating to a subquery on the rowid. (`GROUP_CONCAT(… ORDER BY …)` works since the server ships SQLite 3.50.4.) |
 | 5 | `strict=True` connection option: refuse any statement the translator does not recognise instead of best-effort |
 | 19 | Lambda timeout 15 s → 30 s (terraform + CloudFormation) |
-| 21 | CHANGELOG entry for 0.2.0 |
 
 Permanent, not tasks: ⚪ quirks (documented MySQL behaviour we do not imitate) and ⛔ unsupported
 (row / table locks, triggers, procedures, user variables, FULLTEXT, users / GRANT, partitions).
@@ -21,6 +22,8 @@ Permanent, not tasks: ⚪ quirks (documented MySQL behaviour we do not imitate) 
 
 | task | what | release |
 |---|---|---|
+| 23 | `s3rds.sqlite` `autocommit=False` (open transactions replayed on the server, `/replay`) and SQLAlchemy `sqlite+s3rds://` (`tests/compat/test_sqlalchemy.py`) | 0.2.0 |
+| 21 | CHANGELOG entry for 0.2.0 | 0.2.0 |
 | 1 | `s3rds.sqlite`: parameter encoding (datetime / Decimal / bool), unknown types raise | 0.1.1 |
 | 2 | `s3rds.sqlite`: results paged by bytes, the driver fetches every page, version change → re-run | 0.1.1 |
 | 3 | `s3rds.sqlite`: `executemany` rowcount, strict retry policy (never duplicate a write) | 0.1.1 |

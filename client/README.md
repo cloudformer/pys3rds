@@ -1,15 +1,36 @@
 # s3rds
 
+![s3rds architecture](https://raw.githubusercontent.com/cloudformer/s3rds/main/docs/architecture.svg)
+
+### Switch to s3rds — the only change
+
+| Your code uses | Before | With s3rds — **the only change** | What really differs |
+|---|---|---|---|
+| **sqlite3** | `import sqlite3`<br>`sqlite3.connect("app.db")` | `from s3rds import sqlite`<br>`sqlite.connect(host=URL, user=…, password=…, database="app")` | the file lives on S3 behind HTTPS; `create_function` is refused |
+| **pymysql** | `import pymysql` | `from s3rds import pymysql` | MySQL is translated to SQLite on the client; no locks, procedures, triggers |
+| **SQLAlchemy** | `create_engine("sqlite:///app.db")` | `create_engine("sqlite+s3rds://user:pw@URL/app")` | Core and ORM unchanged; `regexp_match` is refused |
+| **Django** | `"ENGINE": "django.db.backends.sqlite3"` | `"ENGINE": "s3rds.sqlite"` + `HOST` / `USER` / `PASSWORD` | `__regex`, time-zone conversion in queries, `order_by("?")` are refused; run tests on sqlite3 |
+| **psycopg2** | `import psycopg2` | `from s3rds import psycopg2` — *planned, not available yet* | — |
+
+Everything else stays: models, queries, cursors, transactions. For all of them: one writer at a time, every commit
+uploads the whole file (a few hundred ms), so keep a database under ~20 MB. Moving to RDS later is the same change
+backwards (`import pymysql`, `mysql+pymysql://`, `django.db.backends.mysql`). Refused features raise
+`NotSupportedError` — never silently different.
+
+### The server: deploy once, ≈ $0 when idle
+
+You need an s3rds server in your own AWS account — a Lambda Function URL and an S3 bucket, nothing running
+while nobody uses it. Deploy it once with Terraform or CloudFormation from the
+[main repository](https://github.com/cloudformer/s3rds#quick-start). Same as any driver needs its database.
+
 **Python drivers for [s3rds](https://github.com/cloudformer/s3rds) — a truly serverless RDS:
 a Lambda URL as your database endpoint, SQLite on S3, ≈ $0 when idle.**
-
-![s3rds architecture](https://raw.githubusercontent.com/cloudformer/s3rds/main/docs/architecture.svg)
 
 One install, one dependency (sqlglot, used only by `s3rds.pymysql`). Each driver is a submodule **named after the standard
 client it mirrors**, so moving to a real database is a one-line import change and nothing else:
 
 ```bash
-pip install s3rds    # s3rds.sqlite, s3rds.pymysql, sqlite+s3rds:// for SQLAlchemy
+pip install s3rds    # s3rds.sqlite, s3rds.pymysql, sqlite+s3rds:// for SQLAlchemy, ENGINE s3rds.sqlite for Django
 ```
 
 ```python
@@ -40,6 +61,7 @@ conn.transaction([                                 # all-or-nothing, single S3 w
 | `s3rds.pymysql` | MySQL, translated on the client | pymysql | available |
 | `s3rds.psycopg2` | PostgreSQL | psycopg2 | placeholder; `connect()` raises until implemented |
 | `sqlite+s3rds://` | SQLite, written by SQLAlchemy | SQLAlchemy Core / ORM | available — the URL is the only change |
+| `ENGINE: "s3rds.sqlite"` | SQLite, written by Django | Django's SQLite backend | available — the database settings are the only change |
 
 **SQLAlchemy** (Core and ORM): only the URL changes — SQLAlchemy's own SQLite dialect writes the SQL,
 `s3rds.sqlite` replaces the standard library's `sqlite3` underneath.
@@ -48,6 +70,21 @@ conn.transaction([                                 # all-or-nothing, single S3 w
 engine = create_engine("sqlite+s3rds://admin:...@xxxx.lambda-url.us-east-2.on.aws/blog")
 ```
 
+**Django**: Django's own SQLite backend writes the SQL; `atomic()`, savepoints and `migrate` work.
+
+```python
+DATABASES = {"default": {
+    "ENGINE": "s3rds.sqlite",                       # was "django.db.backends.sqlite3"
+    "NAME": "blog", "HOST": "xxxx.lambda-url.us-east-2.on.aws", "USER": "admin", "PASSWORD": "...",
+}}
+```
+
+Django's SQLite backend registers Python functions on the connection; its date functions (`__year`, `__date`,
+`Trunc`, `Extract`) are written in SQLite's `strftime()` instead, the rest raise `NotSupportedError`: time-zone
+conversion in queries (keep `TIME_ZONE` equal to the connection's), `__regex`, `MD5` / `SHA*`, `LPad` / `Repeat` /
+`Reverse`, `order_by("?")`, `StdDev` / `Variance`, date arithmetic in the query. Run `manage.py test` on
+`django.db.backends.sqlite3`.
+
 ## Semantics
 
 - **Transactions**: by default each `execute()` is its own transaction and is durable in S3 when it
@@ -55,7 +92,8 @@ engine = create_engine("sqlite+s3rds://admin:...@xxxx.lambda-url.us-east-2.on.aw
   ran** — it warns if anything was written since the last `commit()` (and stays silent otherwise, so
   pools may call it freely). For all-or-nothing writes use `transaction([...])`, which runs several
   statements as one commit and one S3 write.
-- `s3rds.sqlite.connect(..., autocommit=False)` (what SQLAlchemy uses) has sqlite3's transactions: reads see
+- `s3rds.sqlite.connect(..., autocommit=False)` (what SQLAlchemy uses) and a `BEGIN` statement (Django's
+  `atomic()`) give sqlite3's transactions: reads see
   the transaction's own uncommitted writes, `commit()` writes S3 once, `rollback()` discards. If another
   writer commits first, the transaction raises `OperationalError` instead of overwriting: run it again.
   Keep transactions short — each statement replays the writes before it on the server.
@@ -77,9 +115,6 @@ What the report was verified with; the full report: [REPORT.md](https://github.c
 | SQLite (server engine) | 3.50.4, shipped in the Lambda zip (the runtime's own is 3.40.0) | `src/db/requirements.txt`: `sqlean.py==3.50.4.5` |
 | sqlglot (MySQL translation) | 30.24 | dependency `sqlglot>=30.24,<31` |
 | SQLAlchemy | 2.0, tested on 2.0.55 | extra `pip install "s3rds[sqlalchemy]"` = `SQLAlchemy>=2.0,<2.1` |
+| Django | 6.1, tested on 6.1.2 (Python ≥ 3.12) | extra `pip install "s3rds[django]"` = `Django>=6.1,<6.2` |
 | MySQL (reference) | 8.0.46 in Docker | `tests/compat/docker-compose.yml`: `mysql:8.0.46` |
 
-## Server
-
-You need an s3rds server in your own AWS account — deploy it once with Terraform or CloudFormation
-from the [main repository](https://github.com/cloudformer/s3rds). Same as any driver needs its database.

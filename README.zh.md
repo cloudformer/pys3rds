@@ -1,10 +1,29 @@
 # s3rds
 
+![s3rds 架构](docs/architecture.svg)
+
+### 切换到 s3rds —— 唯一要改的地方
+
+| 你的代码用的是 | 原来 | 换成 s3rds —— **唯一的改动** | 真正的区别 |
+|---|---|---|---|
+| **sqlite3** | `import sqlite3`<br>`sqlite3.connect("app.db")` | `from s3rds import sqlite`<br>`sqlite.connect(host=URL, user=…, password=…, database="app")` | 文件在 S3 上、走 HTTPS；`create_function` 被拒绝 |
+| **pymysql** | `import pymysql` | `from s3rds import pymysql` | MySQL 在客户端翻译成 SQLite；没有锁、存储过程、触发器 |
+| **SQLAlchemy** | `create_engine("sqlite:///app.db")` | `create_engine("sqlite+s3rds://user:pw@URL/app")` | Core 和 ORM 不变；`regexp_match` 被拒绝 |
+| **Django** | `"ENGINE": "django.db.backends.sqlite3"` | `"ENGINE": "s3rds.sqlite"` + `HOST` / `USER` / `PASSWORD` | `__regex`、查询里的时区转换、`order_by("?")` 被拒绝；测试跑在 sqlite3 上 |
+| **psycopg2** | `import psycopg2` | `from s3rds import psycopg2` —— *计划中，尚不可用* | — |
+
+其余都不变：模型、查询、游标、事务。共同点：同一时刻一个写者，每次提交都上传整个文件（几百毫秒），
+数据库保持在 ~20 MB 以内。以后迁 RDS 就是反向同样一处改动（`import pymysql`、`mysql+pymysql://`、
+`django.db.backends.mysql`）。被拒绝的功能抛 `NotSupportedError`——绝不悄悄变样。
+
+### 服务端：一次部署，空闲 ≈ $0
+
+你需要在自己的 AWS 账号里有一个 s3rds 服务端——一个 Lambda Function URL 加一个 S3 桶，没人用时什么都不运行。
+用 Terraform 或 CloudFormation 部署一次即可（见[快速开始](#快速开始)）。和任何驱动都需要它的数据库一样。
+
 **真·serverless 的 RDS：Lambda URL 就是数据库 endpoint，S3 上的 SQLite 就是存储，闲时 ≈ $0。**
 
 [English](README.md) · *Redefine Serverless* 系列 —— 用 AWS 原语重做那些"闲着也要钱"的托管服务。
-
-![s3rds 架构](docs/architecture.svg)
 
 | | **s3rds** | RDS `db.t4g.micro` 单 AZ | RDS `db.t4g.micro` Multi-AZ | Aurora Serverless v2 |
 |---|---|---|---|---|
@@ -14,7 +33,7 @@
 | 维护窗口 | 无 | 有，会重启 | 有 | 有 |
 | SLA | Lambda 99.95% · S3 99.9% | 单 AZ 无 SLA | 99.95% | 99.99% |
 | 持久性 | S3，11 个 9 | EBS | EBS 复制 | 6 副本 |
-| SQL 兼容性 | SQLite 方言、经 `s3rds.pymysql` 的 MySQL 方言、经 `sqlite+s3rds://` 的 SQLAlchemy Core / ORM——见自动生成的[兼容性报告](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
+| SQL 兼容性 | SQLite 方言、经 `s3rds.pymysql` 的 MySQL 方言、经 `sqlite+s3rds://` 的 SQLAlchemy Core / ORM、经 `ENGINE: "s3rds.sqlite"` 的 Django ORM——见自动生成的[兼容性报告](tests/compat/REPORT.md) | MySQL | MySQL | MySQL / PostgreSQL |
 
 > 设计原则：这是一个关系型数据库，数据正确性第一——原子性、一致性不妥协，
 > 写入可以失败，但绝不重复、绝不写错。优势是省钱（闲时 ≈ $0），代价是性能一般。
@@ -84,7 +103,7 @@ aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
 ### 3. 程序连接
 
 ```bash
-pip install s3rds    # s3rds.sqlite、s3rds.pymysql(MySQL 由 sqlglot 在客户端翻译)、SQLAlchemy 用的 sqlite+s3rds://
+pip install s3rds    # s3rds.sqlite、s3rds.pymysql(MySQL 由 sqlglot 在客户端翻译)、SQLAlchemy 用的 sqlite+s3rds://、Django 用的 ENGINE s3rds.sqlite
 ```
 
 想写哪种方言就 import 哪个，API 都是 pymysql 形状；将来上真 RDS 就是最后一次 `import pymysql`：
@@ -119,7 +138,26 @@ engine = create_engine("sqlite+s3rds://admin:...@xxxx.lambda-url.us-east-2.on.aw
 ```
 
 本来就支持 SQLite（`DATABASE_URL=sqlite:///...`）的应用，代码不用改。
+
+**Django**：只换 `ENGINE` 和连接参数。SQL 由 Django 自带的 SQLite 后端生成；底下用 `s3rds.sqlite` 替换 `sqlite3`，
+`atomic()` 和 savepoint 就是驱动的打开事务，`migrate` 可用（重建表时连接会关掉外键，驱动把这个设置随每个请求发给服务端）：
+
+```python
+DATABASES = {"default": {
+    "ENGINE": "s3rds.sqlite",                       # 原来是 "django.db.backends.sqlite3"
+    "NAME": "blog", "HOST": "xxxx.lambda-url.us-east-2.on.aws", "USER": "admin", "PASSWORD": "...",
+}}
+# 以后上 RDS:  "ENGINE": "django.db.backends.mysql"，NAME / HOST / USER / PASSWORD 不变
+```
+
+先建一次数据库（控制台，或 `s3rds.sqlite.connect(...).create_database()`），再 `manage.py migrate`。
+`manage.py test` 请跑在 `django.db.backends.sqlite3` 上（同样的 SQL，本地文件）：在 s3rds 上建测试库会被拒绝。
+
 不可用：注册在连接上的 Python 函数（`create_function`、SQLAlchemy 的 `regexp_match`）——它们得跑在服务端。
+Django 的 SQLite 后端会注册约 35 个这样的函数：其中的日期函数（`__year`、`__date`、`Trunc`、`Extract`、`dates()`）
+这里改用 SQLite 自带的 `strftime()` 实现，并和原版逐项比对；其余的抛 `NotSupportedError`——查询里的时区转换
+（`TIME_ZONE` 保持和连接一致，默认 UTC）、`__regex`、`MD5` / `SHA*`、`LPad` / `RPad` / `Repeat` / `Reverse`、
+`order_by("?")`、`StdDev` / `Variance`、查询里的日期运算（`F("dt") + timedelta`、`F("end") - F("start")`）。
 
 只有一个依赖 sqlglot，只有 `s3rds.pymysql` 用到。线协议就是 HTTPS + JSON，任何语言都能接：
 
@@ -133,8 +171,8 @@ curl -s -u "admin:密码" -H "content-type: application/json" \
 
 兼容性矩阵是自动生成的，不是手写的：**[tests/compat/REPORT.md](tests/compat/REPORT.md)**。
 每一行是一项能力（DDL、DML、查询、函数、约束、元数据、类型），用同一条 SQL 在参照库——`s3rds.pymysql` 对
-Docker 里的 MySQL 8.0，`s3rds.sqlite` 对标准库 `sqlite3`，`sqlite+s3rds` 对跑在 `sqlite3` 上的 SQLAlchemy——
-和 s3rds 上各跑一遍，比对结果、Python 类型、rowcount、lastrowid 和错误码。
+Docker 里的 MySQL 8.0，`s3rds.sqlite` 对标准库 `sqlite3`，`sqlite+s3rds` 对跑在 `sqlite3` 上的 SQLAlchemy，
+`ENGINE: "s3rds.sqlite"` 对 Django 自带的 SQLite 后端——和 s3rds 上各跑一遍，比对结果、Python 类型、rowcount、lastrowid 和错误码。
 
 | 状态 | 含义 |
 |---|---|
@@ -164,6 +202,7 @@ python3 -m pytest tests -q --docker run --aws real-srds.json   # Docker 里的 M
 | SQLite（服务端引擎） | 3.50.4，随 Lambda 代码包一起部署（运行时自带的是 3.40.0） | `src/db/requirements.txt`：`sqlean.py==3.50.4.5` |
 | sqlglot（MySQL 翻译） | 30.24 | 依赖 `sqlglot>=30.24,<31` |
 | SQLAlchemy | 2.0，实测 2.0.55 | 可选 `pip install "s3rds[sqlalchemy]"` = `SQLAlchemy>=2.0,<2.1` |
+| Django | 6.1，实测 6.1.2（Python ≥ 3.12） | 可选 `pip install "s3rds[django]"` = `Django>=6.1,<6.2` |
 | MySQL（参照库） | Docker 里的 8.0.46 | `tests/compat/docker-compose.yml`：`mysql:8.0.46` |
 
 ## 保证
@@ -171,7 +210,7 @@ python3 -m pytest tests -q --docker run --aws real-srds.json   # Docker 里的 M
 | | 靠什么 |
 |---|---|
 | **原子性** | 每条请求显式 `BEGIN/COMMIT`（DDL 也在内）+ S3 PUT 本身原子；`/tx` 多条语句一个事务 |
-| **一致性** | SQLite 约束；新表默认 `STRICT`；每个写连接 `PRAGMA foreign_keys=ON` |
+| **一致性** | SQLite 约束；新表默认 `STRICT`；每个请求 `PRAGMA foreign_keys=ON`，除非连接自己关掉（`PRAGMA foreign_keys = OFF`，Django 的迁移会这样做） |
 | **隔离性** | 单写者（reserved concurrency 1 + `If-Match` CAS）；读到的是整文件快照；打开的事务（`autocommit=False`）是 serializable：别的写者先提交它就失败，绝不覆盖 |
 | **持久性** | S3 PUT 成功后客户端才收到 OK（11 个 9） |
 | **绝不重复写** | 驱动只在"请求确定没送达"时重发；超时一律报"结果未知" |
@@ -183,7 +222,7 @@ python3 -m pytest tests -q --docker run --aws real-srds.json   # Docker 里的 M
 或 `cursor.executemany(...)`。
 
 `s3rds.sqlite.connect(..., autocommit=False)`（SQLAlchemy 用的就是它）提供 sqlite3 的事务：`INSERT` /
-`UPDATE` / `DELETE` 开启事务，事务里的读能看到自己未提交的写，`commit()` 只写一次 S3，`rollback()` 直接丢弃，
+`UPDATE` / `DELETE` 开启事务（两种模式下 `BEGIN` 语句也会开启——Django 的 `atomic()`），事务里的读能看到自己未提交的写，`commit()` 只写一次 S3，`rollback()` 直接丢弃，
 `SAVEPOINT` / `ROLLBACK TO` 可用。服务端不保存会话：事务里的每条语句都带上本事务之前的写，服务端在事务开始时的
 那个版本上重放、执行新语句、再回滚；`commit()` 再重放一次并真正提交。期间若有别的写者先提交，下一条语句或
 `commit()` 抛 `OperationalError`（"transaction conflict"）——回滚后重跑整个事务。代价随事务长度增长（每条语句
@@ -226,9 +265,9 @@ pytest tests/ -v
 不支持的——抛 `NotSupportedError`，绝不静默出错：存储过程/函数、触发器、`FULLTEXT`、
 `SELECT … FOR UPDATE`、`LOCK TABLES`、`GRANT`/用户管理。
 
-**适合谁：** 直接写 MySQL 的代码——pymysql 风格的调用、自己的数据访问层。ORM 走 SQLAlchemy 的 SQLite 方言
-（`sqlite+s3rds://`，见[程序连接](#3-程序连接)）：走 MySQL 方言需要服务端会话，SQLAlchemy 的 MySQL 方言连上就会
-探测 `SHOW VARIABLES`。Django 暂不支持。需要在 MySQL 上用 ORM 的时候就是该迁 RDS 的时候——见 [MIGRATION.md](MIGRATION.md)。
+**适合谁：** 直接写 MySQL 的代码——pymysql 风格的调用、自己的数据访问层。ORM 走它自己的 SQLite 支持
+（SQLAlchemy 用 `sqlite+s3rds://`，Django 用 `ENGINE: "s3rds.sqlite"`，见[程序连接](#3-程序连接)）：走 MySQL 方言需要
+服务端会话，ORM 的 MySQL 方言连上就会探测 `SHOW VARIABLES`。需要在 MySQL 上用 ORM 的时候就是该迁 RDS 的时候——见 [MIGRATION.md](MIGRATION.md)。
 
 结果类型和 pymysql 一致：`DATETIME` → `datetime`、`DATE` → `date`、`TIME` → `timedelta`、`DECIMAL` /
 `SUM` / `AVG` / 整数除法 → `Decimal`、`BLOB` → `bytes`（双向）、`NOW()` → `datetime`。
@@ -257,7 +296,7 @@ verified 的可以放心用；gap 的标了哪个任务来修。每次运行自�
 
 ```
 src/db/           数据库本体:lambda_function.py(HTTP API)、s3_sqlite.py(引擎)、index.html(控制台)
-client/           pip 包 s3rds:s3rds/sqlite.py、s3rds/pymysql.py、s3rds/psycopg2.py、pyproject.toml
+client/           pip 包 s3rds:s3rds/sqlite/(驱动;base.py 是 Django 后端)、s3rds/pymysql.py、s3rds/psycopg2.py、pyproject.toml
 terraform/        部署方式 A
 cloudformation/   部署方式 B
 tests/            正确性测试
@@ -270,14 +309,14 @@ MIGRATION.md      长大了怎么迁 RDS MySQL
 CI（`.github/workflows/test.yml`）每次 push 跑全部测试（含 MySQL 对比）。发版就是打 tag：
 
 ```bash
-# 改 client/pyproject.toml 和 client/s3rds/sqlite.py 的版本号,写 CHANGELOG,提交,然后
-git tag v0.2.0 && git push --tags      # 测试 → 构建 client/ → 发 PyPI(trusted publishing,不用 token)
+# 改 client/pyproject.toml 和 client/s3rds/sqlite/__init__.py 的版本号,写 CHANGELOG,提交,然后
+git tag v0.3.0 && git push --tags      # 测试 → 构建 client/ → 发 PyPI(trusted publishing,不用 token)
 ```
 
 ## 路线图
 
-待办在 [tests/compat/TASKS.md](tests/compat/TASKS.md)。下一步：0.2.0 打开的事务（`autocommit=False`）和 SQLAlchemy（`sqlite+s3rds://`），
-然后 `s3rds.psycopg2`（PostgreSQL 方言；占位模块已随包发布，`connect()` 在实现前会直接报错）和
+待办在 [tests/compat/TASKS.md](tests/compat/TASKS.md)。已完成：打开的事务和 SQLAlchemy（0.2.0）、Django（0.3.0）。
+下一步：`s3rds.psycopg2`（PostgreSQL 方言；占位模块已随包发布，`connect()` 在实现前会直接报错）和
 CloudFormation 一键 *Launch Stack* 按钮。
 
 ## Redefine Serverless 系列

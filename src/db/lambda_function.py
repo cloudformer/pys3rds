@@ -11,6 +11,8 @@ POST /api/db/{db}/tx {statements:[{sql,params?},...]}
 POST /api/db/{db}/replay {statements, replay, base?, commit}
                                             an open transaction of the driver: replay the log, run the rest,
                                             roll back (a look) or commit
+Data calls may carry pragmas {foreign_keys: 0|1, legacy_alter_table: 0|1}: the driver's connection settings,
+applied before BEGIN on every request (the server keeps no session).
 
 Read / write is decided by the endpoint, never by guessing the SQL:
   write endpoint (default)   /query goes through run(): SQLite decides whether data changed, only then S3 is written
@@ -25,7 +27,7 @@ import os
 import re
 import time
 
-from s3_sqlite import (DatabaseExists, DatabaseNotFound, SqliteS3, WriteConflict,
+from s3_sqlite import (SESSION_PRAGMAS, DatabaseExists, DatabaseNotFound, SqliteS3, WriteConflict,
                        create_database, list_databases, sqlite3)
 
 BUCKET = os.environ["DB_BUCKET"]
@@ -236,14 +238,28 @@ def _exec_one(c, sql, params, offset=0):
             "lastrowid": None, "has_more": has_more, "next_offset": offset + len(rows)}
 
 
-def _run(inst, fn, typed=False, trial=False):
+def _pragmas(body):
+    """The connection settings the driver sends with every request: {"foreign_keys": 0 | 1, ...}."""
+    pragmas = body.get("pragmas") or {}
+    if not isinstance(pragmas, dict):
+        raise BadRequest("pragmas must be an object")
+    for name, value in pragmas.items():
+        if name not in SESSION_PRAGMAS:
+            raise BadRequest(f"pragmas: {name} is not a connection setting the server applies "
+                             f"({', '.join(SESSION_PRAGMAS)})")
+        if value not in (0, 1) or isinstance(value, bool):
+            raise BadRequest(f"pragmas.{name} must be 0 or 1")
+    return pragmas
+
+
+def _run(inst, fn, typed=False, trial=False, pragmas=None):
     """read() or run() by endpoint (trial() for a look inside an open transaction), with timing and the S3 action;
     a write on the read-only endpoint is refused by SQLite -> 403."""
     t0 = time.perf_counter()
     detect = sqlite3.PARSE_DECLTYPES if typed else 0
     try:
-        result = (inst.read(fn, detect) if READONLY else
-                  inst.trial(fn, detect) if trial else inst.run(fn, detect))
+        result = (inst.read(fn, detect, pragmas) if READONLY else
+                  inst.trial(fn, detect, pragmas) if trial else inst.run(fn, detect, pragmas))
     except sqlite3.OperationalError as e:
         if READONLY and "readonly" in str(e):
             raise Forbidden("this is the read-only endpoint; send writes to the write endpoint") from None
@@ -281,7 +297,7 @@ def query(event, db):
             raise VersionChanged()
         return _exec_one(c, sql, params, offset)
 
-    result = _run(inst, fn, typed)
+    result = _run(inst, fn, typed, pragmas=_pragmas(body))
     has_more = result.pop("has_more", False)
     next_offset = result.pop("next_offset", None)
     if has_more:
@@ -341,7 +357,7 @@ def _statements(db, body, replayed, base, commit):
             results.append(r)
         return {"results": results, "etag": inst.etag}
 
-    return _run(inst, fn, bool(body.get("types")), trial=not commit)
+    return _run(inst, fn, bool(body.get("types")), trial=not commit, pragmas=_pragmas(body))
 
 
 ROUTES = [

@@ -13,7 +13,7 @@ REPORT = os.path.join(os.path.dirname(__file__), "compat", "REPORT.md")
 
 features = {}   # nodeid -> {"suite", "feature", "gap"}
 outcomes = {}   # nodeid -> "verified" | "gap" | "regression" | "fixed" | "not run"
-versions = {"mysql": None, "sqlalchemy": None}
+versions = {"mysql": None, "sqlalchemy": None, "django": None}
 suite = {"passed": 0, "failed": 0, "skipped": 0, "xfailed": 0}  # every test in the run
 
 STATUS = {"verified": "✅", "gap": "❌ gap", "regression": "🔴 regression", "fixed": "🟡 fixed",
@@ -36,7 +36,7 @@ def pytest_collection_modifyitems(items):
         if "tests/compat/" not in nodeid:
             continue
         kind = ("mysql" if "test_mysql" in nodeid else "sqlalchemy" if "test_sqlalchemy" in nodeid else
-                "sqlite" if "test_sqlite" in nodeid else None)
+                "django" if "test_django" in nodeid else "sqlite" if "test_sqlite" in nodeid else None)
         if not kind:
             continue
         xfail = item.get_closest_marker("xfail")
@@ -127,7 +127,9 @@ def render():
     for kind, title, ref in [("mysql", f"s3rds.pymysql ({compat_aws.target()}) vs MySQL", versions["mysql"] or "MySQL (not run)"),
                              ("sqlite", "s3rds.sqlite vs sqlite3", engine),
                              ("sqlalchemy", "SQLAlchemy sqlite+s3rds vs SQLAlchemy on sqlite3",
-                              f"{versions['sqlalchemy'] or 'SQLAlchemy (not run)'} on {engine}")]:
+                              f"{versions['sqlalchemy'] or 'SQLAlchemy (not run)'} on {engine}"),
+                             ("django", 'Django ENGINE "s3rds.sqlite" vs Django\'s SQLite backend',
+                              f"{versions['django'] or 'Django (not run)'} on {engine}")]:
         rows = [(nid, f) for nid, f in features.items() if f["suite"] == kind]
         lines += [f"## {title} — reference: {ref}", "", _counts(kind), "", LEGEND, ""]
         # docstring "Category | Feature | short note": the category becomes a bold separator row
@@ -166,7 +168,7 @@ def pytest_terminal_summary(terminalreporter):
     if not _ran():
         return
     terminalreporter.section("s3rds compatibility")
-    for kind in ("mysql", "sqlite", "sqlalchemy"):
+    for kind in ("mysql", "sqlite", "sqlalchemy", "django"):
         terminalreporter.write_line(f"{kind:10s} {_counts(kind)}")
     terminalreporter.write_line(f"open tasks: {_open_tasks()}  (tests/compat/TASKS.md)")
     terminalreporter.write_line(f"report: {os.path.relpath(REPORT)}")

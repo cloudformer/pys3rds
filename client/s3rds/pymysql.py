@@ -200,6 +200,7 @@ _RENAME_TABLE = re.compile(r"^\s*RENAME\s+TABLE\s+(.+)$", re.I | re.S)
 _RENAME_PAIR = re.compile(r"`?(\w+)`?\s+TO\s+`?(\w+)`?", re.I)
 _SESSION_NOOP = re.compile(r"^\s*SET\s+(?!@)", re.I)       # SET NAMES / SESSION / time_zone / sql_mode ...
 _USE = re.compile(r"^\s*USE\s+`?(\w+)`?\s*$", re.I)
+_IMPLICIT_COMMIT = re.compile(r"^\s*(CREATE|ALTER|DROP|RENAME|TRUNCATE)\b", re.I)  # MySQL commits the open transaction first
 # LAST_INSERT_ID() / DATABASE(): per-session values the server does not know; the driver fills them in
 _LAST_ID_TOKEN = "__S3RDS_LAST_INSERT_ID__"
 _DATABASE_TOKEN = "__S3RDS_DATABASE__"
@@ -743,6 +744,8 @@ class Connection(_sqlite.Connection):
 
     def execute(self, sql, params=()):
         sql = self._prepare(sql)
+        if self._tx is not None and _IMPLICIT_COMMIT.match(sql):
+            self.commit()   # after START TRANSACTION, DDL ends the transaction as in MySQL
         m = _META.match(sql)
         if m:
             return self._meta(m)

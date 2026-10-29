@@ -771,9 +771,8 @@ def test_strict_type_error(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 18: START TRANSACTION / COMMIT / ROLLBACK statements (0.2 buffered transactions)")
 def test_transaction_commit(mysql_pair):
-    """Transactions | START TRANSACTION ... COMMIT | task 18"""
+    """Transactions | START TRANSACTION ... COMMIT"""
     mysql_pair([
         (T, []), (USERS, []),
         ("START TRANSACTION", []),
@@ -783,9 +782,8 @@ def test_transaction_commit(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 18: START TRANSACTION / COMMIT / ROLLBACK statements (0.2 buffered transactions)")
 def test_transaction_rollback(mysql_pair):
-    """Transactions | START TRANSACTION ... ROLLBACK discards the writes | task 18"""
+    """Transactions | START TRANSACTION ... ROLLBACK discards the writes"""
     mysql_pair([
         (T, []), (USERS, []),
         ("START TRANSACTION", []),
@@ -795,9 +793,8 @@ def test_transaction_rollback(mysql_pair):
     ])
 
 
-@pytest.mark.xfail(strict=True, reason="task 18: START TRANSACTION / COMMIT / ROLLBACK statements (0.2 buffered transactions)")
 def test_transaction_ddl_implicit_commit(mysql_pair):
-    """Transactions | DDL inside a transaction commits implicitly (MySQL semantics) | task 18"""
+    """Transactions | DDL inside a transaction commits implicitly (MySQL semantics)"""
     mysql_pair([
         (T, []), ("DROP TABLE IF EXISTS o", []), (USERS, []),
         ("START TRANSACTION", []),

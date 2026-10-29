@@ -11,6 +11,8 @@ real database you change one import line and nothing else:
 
 SQLAlchemy (Core / ORM) needs no import: create_engine("sqlite+s3rds://user:password@<lambda-url>/<db>")
 uses SQLAlchemy's SQLite dialect with s3rds.sqlite as its driver; on RDS the URL becomes mysql+pymysql://.
+Django needs no import either: DATABASES ENGINE "s3rds.sqlite" (s3rds/sqlite/base.py) is Django's SQLite
+backend on s3rds.sqlite; on RDS the ENGINE becomes django.db.backends.mysql.
 """
 from . import sqlite  # noqa: F401
 from . import pymysql  # noqa: F401  (sqlglot is only needed when a MySQL statement is actually translated)

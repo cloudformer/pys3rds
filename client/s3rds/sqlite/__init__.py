@@ -27,6 +27,11 @@ the next statement or commit() raise OperationalError (roll back and run it agai
 
 SQLAlchemy: create_engine("sqlite+s3rds://user:password@xxx.lambda-url.us-east-2.on.aws/blog")
 SQLAlchemy's SQLite dialect with this driver, autocommit=False; SQLAlchemy itself is the application's.
+Django: DATABASES = {"default": {"ENGINE": "s3rds.sqlite", "NAME": "blog", "HOST": "xxx.lambda-url...",
+"USER": "admin", "PASSWORD": "..."}} -- Django's SQLite backend on this driver (s3rds/sqlite/base.py).
+
+Connection settings as sqlite3 keeps them per connection: PRAGMA foreign_keys (on by default, as the server
+enforces them) and PRAGMA legacy_alter_table are remembered here and applied by the server to every request.
 
 Retry policy -- fail rather than duplicate a write:
   the request is re-sent exactly once, and only when it provably never reached the server
@@ -44,16 +49,21 @@ import socket
 import urllib.parse
 import warnings
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 apilevel = "2.0"
 threadsafety = 1
 paramstyle = "format"  # %s like pymysql; ? is accepted too
-# the engine behind the endpoint: the Lambda runtime's SQLite (tests/compat/TASKS.md, task 11);
-# SQLAlchemy reads it to decide what SQL it may use (RETURNING needs 3.35)
-sqlite_version = "3.40.0"
-sqlite_version_info = (3, 40, 0)
+# the engine behind the endpoint: the server ships its own SQLite (src/db/requirements.txt, sqlean.py);
+# SQLAlchemy and Django read it to decide what SQL they may use (RETURNING needs 3.35)
+sqlite_version = "3.50.4"
+sqlite_version_info = (3, 50, 4)
 Binary = memoryview  # as sqlite3
+
+# Connection.getlimit(): sqlite3's category numbers, the engine's compile-time defaults (Django sizes batches by them)
+SQLITE_LIMIT_COLUMN = 2
+SQLITE_LIMIT_VARIABLE_NUMBER = 9
+_LIMITS = {SQLITE_LIMIT_COLUMN: 2000, SQLITE_LIMIT_VARIABLE_NUMBER: 32766}
 
 
 # ---------------- exceptions: the DB-API classes sqlite3 raises ----------------
@@ -273,7 +283,8 @@ class cursors:  # so that sqlite.cursors.DictCursor reads like pymysql.cursors.D
 class Connection:
     _typed = False   # ask the server for column-type markers (the MySQL driver does; sqlite3 returns text)
 
-    def __init__(self, url, database, user="", password="", timeout=30, cursorclass=Cursor, autocommit=True):
+    def __init__(self, url, database, user="", password="", timeout=30, cursorclass=Cursor, autocommit=True,
+                 paramstyle="format"):
         p = urllib.parse.urlparse(url.rstrip("/"))
         self._host = p.netloc
         self._base_path = p.path
@@ -286,8 +297,12 @@ class Connection:
         self.last = {}
         self._written = False  # a write landed in S3 since the last commit() (drives the rollback() warning)
         self._autocommit = autocommit
-        # the open transaction (autocommit=False): {"log": statements that may have written, "base": ETag}
+        # the open transaction: {"log": statements that may have written, "base": ETag}
         self._tx = None
+        # "qmark": the SQL is SQLite's own (? placeholders, % is a plain character) -- what ORMs write
+        self._qmark = paramstyle == "qmark"
+        # connection settings the server applies to every request (sqlite3 keeps them per connection)
+        self._pragmas = {}
 
     # ---- transport ----
 
@@ -365,23 +380,23 @@ class Connection:
         return (cursorclass or self.cursorclass)(self)
 
     def commit(self):
-        """autocommit=False: the open transaction's writes commit together, S3 is written once; a conflict
-        with another writer raises OperationalError and nothing lands.
-        autocommit=True: every statement is already committed and durable when execute() returns; this only
-        clears the 'written since last commit' flag (kept for pymysql compatibility)."""
-        tx, self._tx = self._tx, None
+        """An open transaction: its writes commit together, S3 is written once; a conflict with another
+        writer (or a deferred constraint) raises and nothing lands -- the transaction is gone either way.
+        Without one (autocommit) every statement is already committed and durable when execute() returns; this
+        only clears the 'written since last commit' flag (kept for pymysql compatibility)."""
+        tx, self._tx, self._written = self._tx, None, False  # a failed commit is not "writes rollback() cannot undo"
         if tx and tx["log"]:
             payload = {"statements": tx["log"], "replay": len(tx["log"]), "base": tx["base"], "commit": True}
             self._note(self._replay(payload))
-        self._written = False
+            self._written = False
 
     def rollback(self):
-        """autocommit=False: the open transaction never reached S3; forgetting it is the rollback.
-        autocommit=True: cannot undo anything, statements are durable as soon as they run. If something was
-        written since the last commit() this warns (never silent); with nothing written it stays quiet,
+        """An open transaction never reached S3; forgetting it is the rollback.
+        Without one (autocommit) nothing can be undone, statements are durable as soon as they run. If something
+        was written since the last commit() this warns (never silent); with nothing written it stays quiet,
         because pools and ORMs call rollback() when returning a connection."""
-        self._tx = None
-        if self._written and self._autocommit:
+        tx, self._tx = self._tx, None
+        if tx is None and self._written and self._autocommit:
             warnings.warn("s3rds: rollback() cannot undo statements that already ran; "
                           "use transaction() for all-or-nothing writes", RuntimeWarning, stacklevel=2)
         self._written = False
@@ -401,6 +416,12 @@ class Connection:
     @property
     def in_transaction(self):
         return self._tx is not None
+
+    def getlimit(self, category):
+        """As sqlite3.Connection.getlimit, for the limits ORMs size their batches by."""
+        if category not in _LIMITS:
+            raise ProgrammingError(0, f"limit category {category} is not available over s3rds")
+        return _LIMITS[category]
 
     def create_function(self, *a, **kw):
         raise NotSupportedError(0, "user-defined functions would run on the server; "
@@ -439,18 +460,20 @@ class Connection:
         always complete. If the database changes while paging the server refuses to mix versions
         (409) and the whole query is re-run, up to 3 times.
 
-        autocommit=False follows sqlite3's rules: INSERT / UPDATE / DELETE / REPLACE (and SAVEPOINT) open a
-        transaction; BEGIN / COMMIT / ROLLBACK statements act as begin / commit() / rollback(); anything
-        else outside a transaction runs on its own.
+        Transactions follow sqlite3's rules: BEGIN / COMMIT / ROLLBACK statements act as begin / commit() /
+        rollback() (also with autocommit, as sqlite3 with isolation_level None); with autocommit=False
+        INSERT / UPDATE / DELETE / REPLACE (and SAVEPOINT) open one; anything else outside a transaction runs
+        on its own.
         """
-        if not self._autocommit:
+        r = self._session_pragma(sql)
+        if r is not None:
+            return r
+        if not self._autocommit or self._tx is not None or _BEGIN.match(sql):
             r = self._tx_statement(sql, params)
             if r is not None:
                 return r
         path = f"/api/db/{self.database}/query"
-        payload = {"sql": _to_qmark(sql), "params": _encode_params(params)}
-        if self._typed:
-            payload["types"] = True
+        payload = self._options({"sql": self._sql(sql), "params": _encode_params(params)})
         for attempt in range(3):
             try:
                 return self._fetch_pages(path, payload)
@@ -465,7 +488,7 @@ class Connection:
             raise InterfaceError(0, "the server truncated the result (server older than 0.1.1); upgrade the server")
         rows, page = first["rows"], first
         while page.get("next_token"):
-            page = self._post(path, {"next_token": page["next_token"]})
+            page = self._post(path, self._options({"next_token": page["next_token"]}))
             rows += page["rows"]
         first["rows"] = rows
         first.pop("truncated", None)
@@ -488,16 +511,45 @@ class Connection:
 
         Each item is "sql" or (sql, params). Returns one result per statement.
         """
-        stmts = [_statement(s, []) if isinstance(s, str) else _statement(s[0], s[1] if len(s) > 1 else [])
+        stmts = [self._statement(s, []) if isinstance(s, str) else self._statement(s[0], s[1] if len(s) > 1 else [])
                  for s in statements]
-        payload = {"statements": stmts}
-        if self._typed:
-            payload["types"] = True
-        r = self._post(f"/api/db/{self.database}/tx", payload)
+        r = self._post(f"/api/db/{self.database}/tx", self._options({"statements": stmts}))
         self._note(r)
         return [_decode_result(x) for x in r["results"]]
 
-    # ---- open transactions (autocommit=False) ----
+    def _sql(self, sql):
+        return sql if self._qmark else _to_qmark(sql)
+
+    def _statement(self, sql, params):
+        return {"sql": self._sql(sql), "params": _encode_params(params)}
+
+    def _options(self, payload):
+        """What every request carries besides its statements: type markers, the connection's PRAGMAs."""
+        if self._typed:
+            payload["types"] = True
+        if self._pragmas:
+            payload["pragmas"] = dict(self._pragmas)
+        return payload
+
+    def _session_pragma(self, sql):
+        """PRAGMA foreign_keys / legacy_alter_table = v: remembered here, sent with every request (the server
+        keeps no session). Inside a transaction sqlite3 ignores foreign_keys; legacy_alter_table would change
+        the transaction's replay, so it is refused there. Returns None for any other statement."""
+        m = _SESSION_PRAGMA.match(sql)
+        if not m:
+            return None
+        name, raw = m.group(1).lower(), m.group(2) or m.group(3)
+        value = raw.lower()
+        if value not in _PRAGMA_VALUES:
+            raise OperationalError(0, f"PRAGMA {name}: unknown value {raw!r}")
+        if self._tx is not None:
+            if name == "legacy_alter_table":
+                raise NotSupportedError(0, "PRAGMA legacy_alter_table inside a transaction; set it before BEGIN")
+            return _empty()  # as sqlite3: foreign_keys cannot change inside a transaction
+        self._pragmas[name] = _PRAGMA_VALUES[value]
+        return _empty()
+
+    # ---- open transactions ----
     # The server keeps no session: every statement inside a transaction is sent with the log of the
     # statements that may have written so far. The server replays the log on the version the transaction
     # began on (base), runs the new statements, returns their results and rolls back; commit() sends the log
@@ -518,7 +570,7 @@ class Connection:
             self.rollback()
             return _empty()
         if self._tx is None:
-            if not _IMPLICIT_BEGIN.match(sql):
+            if self._autocommit or not _IMPLICIT_BEGIN.match(sql):
                 return None
             self._tx = {"log": [], "base": None}
         return self._tx_run([(sql, params)])[0]
@@ -527,7 +579,7 @@ class Connection:
         statements = [(sql, p) for p in seq_of_params]
         if not statements:
             return []
-        if self._autocommit or (self._tx is None and not _IMPLICIT_BEGIN.match(sql)):
+        if self._tx is None and (self._autocommit or not _IMPLICIT_BEGIN.match(sql)):
             return self.transaction(statements)
         if self._tx is None:
             self._tx = {"log": [], "base": None}
@@ -535,7 +587,7 @@ class Connection:
 
     def _tx_run(self, statements):
         tx = self._tx
-        new = [_statement(sql, params) for sql, params in statements]
+        new = [self._statement(sql, params) for sql, params in statements]
         payload = {"statements": tx["log"] + new, "replay": len(tx["log"]), "commit": False}
         if tx["base"]:
             payload["base"] = tx["base"]
@@ -546,10 +598,8 @@ class Connection:
         return [_decode_result(x) for x in r["results"]]
 
     def _replay(self, payload):
-        if self._typed:
-            payload["types"] = True
         try:
-            return self._post(f"/api/db/{self.database}/replay", payload)
+            return self._post(f"/api/db/{self.database}/replay", self._options(payload))
         except Error as e:
             if e.status == 404 and "no route" in e.message:
                 raise OperationalError(404, "the server has no open transactions (older than this driver); "
@@ -561,11 +611,13 @@ _BEGIN = re.compile(r"\s*BEGIN\b", re.I)
 _COMMIT = re.compile(r"\s*(COMMIT|END)\b", re.I)
 _ROLLBACK = re.compile(r"\s*ROLLBACK\b(?!.*\bTO\b)", re.I | re.S)  # ROLLBACK TO <savepoint> is a statement
 _IMPLICIT_BEGIN = re.compile(r"\s*(INSERT|UPDATE|DELETE|REPLACE|SAVEPOINT)\b", re.I)
-_READS = re.compile(r"\s*(SELECT|VALUES|EXPLAIN)\b", re.I)  # cannot write: never replayed
-
-
-def _statement(sql, params):
-    return {"sql": _to_qmark(sql), "params": _encode_params(params)}
+# cannot write, never replayed: queries and the PRAGMAs that read (a bare name, or one naming a table / index)
+_READS = re.compile(r"\s*(SELECT|VALUES|EXPLAIN)\b|\s*PRAGMA\s+(\w+\s*;?\s*$|(table_info|table_xinfo|table_list|"
+                    r"index_list|index_info|index_xinfo|foreign_key_list|foreign_key_check|integrity_check|"
+                    r"quick_check)\b)", re.I)
+_SESSION_PRAGMA = re.compile(r"\s*PRAGMA\s+(foreign_keys|legacy_alter_table)\s*(?:=\s*(\w+)|\(\s*(\w+)\s*\))\s*;?\s*$",
+                             re.I)
+_PRAGMA_VALUES = {"1": 1, "on": 1, "true": 1, "yes": 1, "0": 0, "off": 0, "false": 0, "no": 0}
 
 
 def _empty():
@@ -575,15 +627,17 @@ def _empty():
 # ---------------- module entry point, same signature as pymysql.connect ----------------
 
 def connect(host, user="", password="", database="", timeout=30,
-            cursorclass=Cursor, autocommit=True, **_ignored):
+            cursorclass=Cursor, autocommit=True, paramstyle="format", **_ignored):
     """Extra pymysql arguments (port, charset, ...) are accepted and ignored.
 
     host may be given with or without https:// (Lambda Function URLs are https only).
     autocommit=True (default): every statement commits on its own. autocommit=False: transactions as
     sqlite3 has them -- commit() / rollback(), reads see the transaction's own writes.
+    paramstyle="format" (default): %s or ? placeholders, %% for a literal %. "qmark": SQLite's own SQL,
+    ? placeholders only and % left alone (what SQLAlchemy and Django write).
     """
     url = host if host.startswith("http") else "https://" + host
-    return Connection(url, database, user, password, timeout, cursorclass, autocommit)
+    return Connection(url, database, user, password, timeout, cursorclass, autocommit, paramstyle)
 
 
 # ---------------- SQLAlchemy: sqlite+s3rds://user:password@<lambda-url>/<database> ----------------
@@ -626,7 +680,7 @@ def _sqlalchemy_dialect():
         def create_connect_args(self, url):
             host = url.host + (f":{url.port}" if url.port else "")
             return [], {"host": host, "user": url.username or "", "password": url.password or "",
-                        "database": url.database or "", "autocommit": False}
+                        "database": url.database or "", "autocommit": False, "paramstyle": "qmark"}
 
         def on_connect(self):
             return None  # pysqlite registers Python functions (regexp, floor) here; they cannot run on the server

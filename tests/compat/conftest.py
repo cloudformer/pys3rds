@@ -276,3 +276,169 @@ def sqlalchemy_pair(fake_s3, monkeypatch, bucket, tmp_path):
         ours = scenario(s3_engine(), s3_engine())
         assert real == ours, f"\n  real:  {real}\n  s3rds: {ours}"
     return run
+
+
+# ---- Django side (no Docker: the reference is Django's own SQLite backend on the server's pinned SQLite module) ----
+# Django is configured once per process: aliases ref / ref2 (the reference, one file per test) and s3 / s3b
+# (ENGINE "s3rds.sqlite", served in-process); the second alias of each pair plays another client.
+
+_DJANGO_TYPES = {}  # what django/db/backends/sqlite3/base.py registers on sqlite3: {"converters": …, "adapters": …}
+
+
+def _django_reference_backend():
+    """django.db.backends.sqlite3 with the pinned engine in place of the standard library's sqlite3 module
+    (registered as the module compat_django_reference.base, which ENGINE names)."""
+    import datetime
+    import decimal
+    import sys
+    import types
+    from collections.abc import Mapping
+
+    from django.db.backends.sqlite3 import base as dj
+    from django.db.backends.sqlite3 import features as dj_features
+    from django.db.backends.sqlite3._functions import register as register_functions
+    from django.utils.dateparse import parse_date, parse_datetime, parse_time
+
+    # Django registers these module-wide; the in-process server registers its own on the same module (typed
+    # MySQL results), so the reference gets Django's only while it runs (reference_types())
+    _DJANGO_TYPES["converters"] = {"BOOL": b"1".__eq__, **{
+        name: (lambda parse: lambda s: parse(s.decode()))(parse)
+        for name, parse in (("DATE", parse_date), ("TIME", parse_time), ("DATETIME", parse_datetime),
+                            ("TIMESTAMP", parse_datetime))}}
+    _DJANGO_TYPES["adapters"] = {(decimal.Decimal, ENGINE.PrepareProtocol): str,
+                                 (datetime.date, ENGINE.PrepareProtocol): lambda v: v.isoformat(),
+                                 (datetime.datetime, ENGINE.PrepareProtocol): lambda v: v.isoformat(" ")}
+
+    def convert(query, params):
+        names = list(params) if isinstance(params, Mapping) else None
+        return dj.SQLiteCursorWrapper.convert_query(None, query, param_names=names)
+
+    class Cursor(ENGINE.Cursor):
+        def execute(self, query, params=None):
+            return super().execute(query) if params is None else super().execute(convert(query, params), params)
+
+        def executemany(self, query, param_list):
+            param_list = list(param_list)
+            return super().executemany(convert(query, param_list[0] if param_list else ()), param_list)
+
+    class Features(dj_features.DatabaseFeatures):
+        supports_aggregate_order_by_clause = ENGINE.sqlite_version_info >= (3, 44, 0)
+        max_query_params = 32766  # sqlean's Connection has no getlimit(); SQLite's default limit
+
+    class DatabaseWrapper(dj.DatabaseWrapper):
+        Database = ENGINE
+        features_class = Features
+
+        def get_new_connection(self, conn_params):
+            conn = ENGINE.connect(**conn_params)
+            register_functions(conn)
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA legacy_alter_table = OFF")
+            return conn
+
+        def create_cursor(self, name=None):
+            return self.connection.cursor(factory=Cursor)
+
+    module = types.ModuleType("compat_django_reference.base")
+    module.DatabaseWrapper = DatabaseWrapper
+    sys.modules["compat_django_reference"] = types.ModuleType("compat_django_reference")
+    sys.modules["compat_django_reference.base"] = module
+
+
+def _django_test_app():
+    """The installed app (label "compat") test_django.py's models belong to: Django builds reverse relations
+    (cascade delete, author.books, Count("books")) only for models of installed apps."""
+    import sys
+    import types
+
+    from django.apps import AppConfig
+
+    class CompatConfig(AppConfig):
+        name = "compat_django_app"
+        label = "compat"
+        path = os.path.dirname(os.path.abspath(__file__))
+
+    package = types.ModuleType("compat_django_app")
+    package.__path__ = []  # no models submodule: the models are defined in test_django.py
+    apps_module = types.ModuleType("compat_django_app.apps")
+    apps_module.CompatConfig = CompatConfig
+    sys.modules.update({"compat_django_app": package, "compat_django_app.apps": apps_module})
+
+
+def _django_configure():
+    import django
+    from django.conf import settings
+    _django_reference_backend()
+    _django_test_app()
+    ref = {"ENGINE": "compat_django_reference", "NAME": "unset.sqlite3"}
+    s3 = {"ENGINE": "s3rds.sqlite", "NAME": "compat", "HOST": "in-process.test", "USER": "admin", "PASSWORD": "pw"}
+    settings.configure(
+        DATABASES={"default": ref, "ref": ref, "ref2": dict(ref), "s3": s3, "s3b": dict(s3)},
+        INSTALLED_APPS=["django.contrib.contenttypes", "django.contrib.auth", "compat_django_app.apps.CompatConfig"],
+        USE_TZ=True, TIME_ZONE="UTC", DEFAULT_AUTO_FIELD="django.db.models.AutoField",
+        PASSWORD_HASHERS=["django.contrib.auth.hashers.MD5PasswordHasher"],  # fast; hashing is client-side anyway
+    )
+    django.setup()
+
+
+class reference_types:
+    """with reference_types(): Django's converters / adapters on the engine module, the server's put back after."""
+    def __enter__(self):
+        self.saved = dict(ENGINE.converters), dict(ENGINE.adapters)
+        ENGINE.converters.clear()
+        ENGINE.converters.update(_DJANGO_TYPES["converters"])
+        ENGINE.adapters.update(_DJANGO_TYPES["adapters"])
+
+    def __exit__(self, *exc):
+        for registry, saved in zip((ENGINE.converters, ENGINE.adapters), self.saved):
+            registry.clear()
+            registry.update(saved)
+
+
+try:  # here, before test_django.py defines its models
+    import django  # noqa: F401
+except ImportError:
+    pass
+else:
+    _django_configure()
+
+
+@pytest.fixture
+def django_pair(fake_s3, monkeypatch, bucket, tmp_path):
+    """run(scenario) -> scenario(db, other) on Django + sqlite3 (aliases ref, ref2) and on ENGINE s3rds.sqlite
+    (s3, s3b); the returned values must be equal. run.unsupported(scenario): the reference runs it, s3rds
+    refuses it with NotSupportedError."""
+    django = pytest.importorskip("django")
+    from types import SimpleNamespace
+
+    from django.db import NotSupportedError, connections
+
+    connect = s3sqlite.connect
+    monkeypatch.setattr(s3sqlite, "connect", lambda host, user, password, database, **kw: in_process(
+        SimpleNamespace(connect=connect), fake_s3, monkeypatch, bucket, **kw))
+    for alias in ("ref", "ref2"):
+        connections[alias].settings_dict["NAME"] = str(tmp_path / "ref.sqlite3")
+    connections.close_all()
+    if not compat_report.versions.get("django"):
+        compat_report.versions["django"] = f"Django {django.get_version()}"
+
+    def run(scenario):
+        try:
+            with reference_types():
+                real = scenario("ref", "ref2")
+            ours = scenario("s3", "s3b")
+        finally:
+            connections.close_all()
+        assert real == ours, f"\n  real:  {real}\n  s3rds: {ours}"
+
+    def unsupported(scenario):
+        try:
+            with reference_types():
+                scenario("ref", "ref2")  # the reference runs it
+            with pytest.raises(NotSupportedError):
+                scenario("s3", "s3b")
+        finally:
+            connections.close_all()
+    run.unsupported = unsupported
+    yield run
+    connections.close_all()

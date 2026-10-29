@@ -41,6 +41,17 @@ _READ_PRAGMAS = {
 }
 
 
+# connection settings a request may carry (the driver keeps them per connection, as sqlite3 does); applied
+# before BEGIN, where they take effect. Foreign keys are on unless the request turns them off
+SESSION_PRAGMAS = {"foreign_keys": 1, "legacy_alter_table": 0}
+
+
+def _apply_pragmas(conn, pragmas):
+    for name, value in {**SESSION_PRAGMAS, **(pragmas or {})}.items():
+        if name in SESSION_PRAGMAS:  # names and 0 / 1 values are checked by the HTTP layer; never interpolate others
+            conn.execute(f"PRAGMA {name}={int(bool(value))}")
+
+
 class DatabaseNotFound(Exception):
     pass
 
@@ -190,7 +201,7 @@ class SqliteS3:
 
     # ---- read ----
 
-    def read(self, fn, detect_types=0):
+    def read(self, fn, detect_types=0, pragmas=None):
         """fn(conn) -> result. The connection is read-only; SQLite refuses any write.
         With detect_types=sqlite3.PARSE_DECLTYPES the registered converters run by declared column type (when the driver asks for types)."""
         self._reset_stats()
@@ -198,13 +209,14 @@ class SqliteS3:
         conn = sqlite3.connect(f"file:{self.local}?mode=ro", uri=True, detect_types=detect_types)
         conn.row_factory = sqlite3.Row
         try:
+            _apply_pragmas(conn, pragmas)
             return fn(conn)
         finally:
             conn.close()
 
     # ---- read / write ----
 
-    def run(self, fn, detect_types=0):
+    def run(self, fn, detect_types=0, pragmas=None):
         """fn(conn) -> result. Uploads with If-Match only if fn really changed data.
 
         fn must be replayable (plain SQL is): on a 412 conflict it runs again on the freshly downloaded file.
@@ -216,7 +228,7 @@ class SqliteS3:
             self._ensure_fresh()
             etag = SqliteS3._etags[self.local]
             before = _fingerprint(self.local)
-            result, dirty = self._transact(fn, detect_types)
+            result, dirty = self._transact(fn, detect_types, pragmas=pragmas)
             # the authorizer sees intent, the file fingerprint sees facts (catches PRAGMA optimize and friends that write without an assignment)
             if not dirty and _fingerprint(self.local) == before:
                 return result
@@ -247,20 +259,20 @@ class SqliteS3:
 
     # ---- write, look, roll back ----
 
-    def trial(self, fn, detect_types=0):
+    def trial(self, fn, detect_types=0, pragmas=None):
         """fn(conn) inside a transaction that is always rolled back: fn sees its own writes, nobody else
         does, S3 is never written. The driver's transactions are built on it: replay the statements written
         so far, run one more, return its result, forget everything."""
         self._reset_stats()
         self._ensure_fresh()
-        result, _dirty = self._transact(fn, detect_types, commit=False)
+        result, _dirty = self._transact(fn, detect_types, commit=False, pragmas=pragmas)
         return result
 
-    def _transact(self, fn, detect_types=0, commit=True):
+    def _transact(self, fn, detect_types=0, commit=True, pragmas=None):
         """Run fn inside an explicit transaction (DDL included); returns (result, whether the authorizer saw a write).
 
         fn raising -> ROLLBACK, the local file is as before; only a failed ROLLBACK drops the cache.
-        commit=False -> ROLLBACK even when fn succeeds.
+        commit=False -> ROLLBACK even when fn succeeds. pragmas: the request's connection settings (SESSION_PRAGMAS).
         """
         dirty = False
 
@@ -280,7 +292,7 @@ class SqliteS3:
         try:
             # if the database is in WAL mode switch back to a single-file journal so the main file is complete after close (outside the transaction)
             conn.execute("PRAGMA journal_mode=DELETE")
-            conn.execute("PRAGMA foreign_keys=ON")  # SQLite does not enforce foreign keys by default
+            _apply_pragmas(conn, pragmas)  # foreign keys on unless the request turned them off (SQLite's default is off)
             conn.set_authorizer(authorizer)
             conn.execute("BEGIN")
             try:

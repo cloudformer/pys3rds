@@ -1,16 +1,16 @@
 # s3rds compatibility report · [tasks](TASKS.md)
 
-Generated 2026-10-27 by `pytest tests` · s3rds 0.2.0 · sqlglot 30.24.0 · Python 3.13.7
+Generated 2026-10-28 by `pytest tests` · s3rds 0.3.0 · sqlglot 30.24.0 · Python 3.13.7
 
 Each row is one feature exercised with the same SQL on the reference database and on s3rds; results, Python types, rowcount, lastrowid and error codes must match. The feature list only grows (a removed case would show in git), so the support percentage can only move up.
 
-Whole test run: **207 passed**, 0 failed, 8 expected failures (known gaps), 1 skipped — regression suite (`tests/`) and compatibility suite (`tests/compat/`) together.
+Whole test run: **237 passed**, 0 failed, 5 expected failures (known gaps), 1 skipped — regression suite (`tests/`) and compatibility suite (`tests/compat/`) together.
 
-Open tasks: task 18 (3), task 22 (1) — see [TASKS.md](TASKS.md).
+Open tasks: task 22 (1) — see [TASKS.md](TASKS.md).
 
-## s3rds.pymysql (deployed Lambda https://fv6zi4zg3qnt6q4n2yitsq3lza0refke.lambda-url.us-east-2.on.aws/) vs MySQL — reference: MySQL 8.0.46 (Docker)
+## s3rds.pymysql (lambda_handler in-process) vs MySQL — reference: MySQL 8.0.46 (Docker)
 
-**Support 87%** (87 / 99 features) · 4 gap · 5 quirk · 8 unsupported · 82 verified
+**Support 90%** (90 / 99 features) · 1 gap · 5 quirk · 8 unsupported · 85 verified
 
 ✅ verified · ❌ gap — known difference, the note names the task that closes it · ⚪ engine quirk — documented, deliberately not aligned · ⛔ unsupported by design, refused with NotSupportedError · 🟡 fixed — xfail marker to remove · 🔴 regression · ⏭ not run
 
@@ -67,9 +67,9 @@ Open tasks: task 18 (3), task 22 (1) — see [TASKS.md](TASKS.md).
 | WHERE with LIKE, IN, BETWEEN, IS NULL, <>, AND / OR | ✅ |  |
 | Window functions: ROW_NUMBER, RANK, COUNT(*) OVER (PARTITION BY) | ✅ |  |
 | **Transactions** | | |
-| DDL inside a transaction commits implicitly (MySQL semantics) | ❌ gap | task 18 |
-| START TRANSACTION ... COMMIT | ❌ gap | task 18 |
-| START TRANSACTION ... ROLLBACK discards the writes | ❌ gap | task 18 |
+| DDL inside a transaction commits implicitly (MySQL semantics) | ✅ |  |
+| START TRANSACTION ... COMMIT | ✅ |  |
+| START TRANSACTION ... ROLLBACK discards the writes | ✅ |  |
 | **Functions** | | |
 | ABS, MOD, LOWER, TRIM, REPLACE, LEFT, RIGHT, INSTR | ✅ |  |
 | CASE WHEN, COALESCE, NULLIF | ✅ |  |
@@ -177,3 +177,42 @@ Open tasks: task 18 (3), task 22 (1) — see [TASKS.md](TASKS.md).
 | inspect(): table names, columns, primary key, foreign keys, indexes, unique constraints | ✅ |  |
 | **Types** | | |
 | DateTime, Date, Numeric, Float, Boolean, LargeBinary, JSON, Enum round-trip with their Python types | ✅ |  |
+
+## Django ENGINE "s3rds.sqlite" vs Django's SQLite backend — reference: Django 6.1.2 on SQLite 3.50.4 (sqlean.py 3.50.4.5)
+
+**Support 76%** (16 / 21 features) · 5 unsupported · 16 verified
+
+✅ verified · ❌ gap — known difference, the note names the task that closes it · ⚪ engine quirk — documented, deliberately not aligned · ⛔ unsupported by design, refused with NotSupportedError · 🟡 fixed — xfail marker to remove · 🔴 regression · ⏭ not run
+
+| Feature | Status | Note |
+|---|---|---|
+| **DML** | | |
+| create / save (insert, then update) / get / QuerySet.update / delete with cascade; auto ids | ✅ |  |
+| **Queries** | | |
+| aggregate / annotate (group by, having), Subquery / OuterRef / Exists, F, Case / When, slicing, distinct, first / last | ✅ |  |
+| lookups: exact / iexact / contains (with % in the value) / icontains / startswith / endswith / in / range / isnull / gt / lte, Q, exclude | ✅ |  |
+| **ORM** | | |
+| ForeignKey: select_related, prefetch_related, reverse relation, filter across the relation, cascade delete | ✅ |  |
+| ManyToMany: add / remove / set / clear, filter and annotate through the join table | ✅ |  |
+| bulk_create (ids returned), bulk_update, get_or_create, update_or_create, in_bulk, F() update, bulk_create(update_conflicts=True) | ✅ |  |
+| multi-table inheritance: a Restaurant is one Place row and one Restaurant row, saved atomically | ✅ |  |
+| **Transactions** | | |
+| an exception rolls the atomic block back; a nested atomic (savepoint) rolls back alone; on_commit | ✅ |  |
+| atomic(): reads inside see the block's own writes, another connection only after commit | ✅ |  |
+| **Functions** | | |
+| Trunc (year … second, TruncDate / TruncTime) and Extract annotations, group by month, QuerySet.dates() / datetimes() | ✅ |  |
+| date lookups: __year / __month / __day / __week_day / __iso_week_day / __week / __iso_year / __quarter / __hour / __minute / __second / __date / __time | ✅ |  |
+| text and math functions SQLite has built in: Lower / Upper / Length / Concat / Substr / Replace / StrIndex / Left / Right / Trim, Abs / Round / Ceil / Floor / Mod / Power (**) / Sqrt / Sign, Coalesce / Greatest / Least / Cast | ✅ |  |
+| **Constraints & errors** | | |
+| unique and foreign-key violations raise IntegrityError (in atomic and in autocommit); nothing lands | ✅ |  |
+| **Metadata** | | |
+| migrate: the django.contrib.auth and contenttypes migrations, create_user / check_password, permissions | ✅ |  |
+| migration operations: create, add / alter (table rebuild, foreign keys off) / rename / remove a field, unique constraint, rename a model; introspection | ✅ |  |
+| **Types** | | |
+| every common field type round-trips: aware datetime, Decimal, Duration, UUID, bytes, JSON (with key lookups), bool, NULL | ✅ |  |
+| **Unsupported** | | |
+| MD5 / SHA1 … SHA512, LPad / RPad / Repeat / Reverse, Cot, order_by("?") (Random) | ⛔ |  |
+| StdDev / Variance aggregates | ⛔ |  |
+| __regex / __iregex lookups | ⛔ |  |
+| date / time arithmetic in the query: F("dt") + timedelta, F("end") - F("start") | ⛔ |  |
+| date functions converted to another time zone (USE_TZ, a current time zone other than the connection's) | ⛔ |  |
