@@ -310,13 +310,13 @@ CI（`.github/workflows/test.yml`）每次 push 跑全部测试（含 MySQL 对�
 
 ```bash
 # 改 client/pyproject.toml 和 client/s3rds/sqlite/__init__.py 的版本号,写 CHANGELOG,提交,然后
-git tag v0.3.0 && git push --tags      # 测试 → 构建 client/ → 发 PyPI(trusted publishing,不用 token)
+git tag v0.2.1 && git push --tags      # 测试 → 构建 client/ → 发 PyPI(trusted publishing,不用 token)
 ```
 
 ## 路线图
 
-待办在 [tests/compat/TASKS.md](tests/compat/TASKS.md)。已完成：打开的事务和 SQLAlchemy（0.2.0）、Django（0.3.0）。
-下一步：`s3rds.psycopg2`（PostgreSQL 方言；占位模块已随包发布，`connect()` 在实现前会直接报错）和
+待办在 [tests/compat/TASKS.md](tests/compat/TASKS.md)。已完成：打开的事务和 SQLAlchemy（0.2.0）、Django（0.2.1）。
+下一步（0.3.0）：`s3rds.psycopg2`（PostgreSQL 方言；占位模块已随包发布，`connect()` 在实现前会直接报错）和
 CloudFormation 一键 *Launch Stack* 按钮。
 
 ## Redefine Serverless 系列

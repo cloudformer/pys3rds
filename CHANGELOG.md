@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.3.0)
+## Unreleased (0.2.1)
 
 Django. Server redeploy required (connection settings sent with every request); with an old server, Django's
 schema editor stops with "foreign key constraint checks are enabled" instead of rebuilding a table unsafely.

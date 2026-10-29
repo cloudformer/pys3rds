@@ -327,13 +327,13 @@ CI (`.github/workflows/test.yml`) runs the whole suite, MySQL included, on every
 
 ```bash
 # bump version in client/pyproject.toml and client/s3rds/sqlite/__init__.py, add the CHANGELOG entry, commit, then
-git tag v0.3.0 && git push --tags      # tests → build client/ → PyPI (trusted publishing, no token)
+git tag v0.2.1 && git push --tags      # tests → build client/ → PyPI (trusted publishing, no token)
 ```
 
 ## Roadmap
 
 Open work is tracked in [tests/compat/TASKS.md](tests/compat/TASKS.md). Done: open transactions and SQLAlchemy
-(0.2.0), Django (0.3.0). Next: `s3rds.psycopg2` (PostgreSQL dialect; the placeholder module ships today and
+(0.2.0), Django (0.2.1). Next, 0.3.0: `s3rds.psycopg2` (PostgreSQL dialect; the placeholder module ships today and
 `connect()` raises until implemented) and a one-click CloudFormation
 *Launch Stack* button.
 
