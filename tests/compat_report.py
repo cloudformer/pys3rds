@@ -102,10 +102,21 @@ def _counts(kind):
     return pct + " · ".join(f"{n} {k}" for k, n in sorted(c.items()))
 
 
+def _dist_version(*names):
+    """An installed distribution's version; Python 3.9 does not normalize names, so try each spelling."""
+    from importlib import metadata
+    for name in names:
+        try:
+            return metadata.version(name)
+        except metadata.PackageNotFoundError:
+            pass
+    return "unknown"
+
+
 def render():
     import compat_aws
     from s3rds.server.s3_sqlite import sqlite3
-    engine = f"SQLite {sqlite3.sqlite_version} ({'sqlean.py ' + __import__('importlib.metadata').metadata.version('sqlean.py') if sqlite3.__name__ == 'sqlean' else 'standard library'})"
+    engine = f"SQLite {sqlite3.sqlite_version} ({'sqlean.py ' + _dist_version('sqlean.py', 'sqlean_py') if sqlite3.__name__ == 'sqlean' else 'standard library'})"
     import s3rds
     try:
         import sqlglot

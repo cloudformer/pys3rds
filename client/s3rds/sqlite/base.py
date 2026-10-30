@@ -239,7 +239,7 @@ class DatabaseWrapper(base.DatabaseWrapper):
         # no register_functions(conn): Python functions would have to run on the server (DatabaseOperations above)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA legacy_alter_table = OFF")
-        for init_command in self.init_commands:
+        for init_command in getattr(self, "init_commands", ()):  # OPTIONS init_command: Django 5.1+ only
             if init_command := init_command.strip():
                 conn.execute(init_command)
         return conn
