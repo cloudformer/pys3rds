@@ -256,7 +256,7 @@ function dialog(title, fields){
 
 async function askCred(){
   const v = await dialog('Sign in', [
-    {key:'u', label:'user', placeholder:'db_user'},
+    {key:'u', label:'user', placeholder:'user'},
     {key:'p', label:'password', type:'password'},
   ]);
   if (v) saveCred(v.u + ':' + v.p);

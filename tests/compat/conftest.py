@@ -124,7 +124,7 @@ def real_mysql():
 def deployed(request):
     """--aws: the deployed stack and its own test database `compat`, emptied once per run as the Docker
     container starts empty. None without --aws."""
-    live = compat_aws.endpoint(request.config, url="db_url", user="db_user", password="db_password")
+    live = compat_aws.endpoint(request.config, url="db_url", user="console_auth_username", password="console_auth_password")
     if live:
         c = s3mysql.connect(host=live["url"], user=live["user"], password=live["password"], database="compat")
         c.create_database()

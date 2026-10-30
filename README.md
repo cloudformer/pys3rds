@@ -67,7 +67,7 @@ Mapped to RDS concepts:
 | DB instance endpoint | the db lambda's Function URL |
 | a database on the instance | one `.sqlite` object in the bucket |
 | `database=` in the connection string | `/api/db/{name}` in the URL |
-| user / password | HTTP Basic (`db_user` / `db_password`) |
+| user / password | HTTP Basic (`console_auth_username` / `console_auth_password`) |
 | data directory | `s3://<bucket>/db/` |
 | `CREATE DATABASE` | `POST /api/databases` |
 
@@ -78,7 +78,7 @@ Mapped to RDS concepts:
 **Terraform**
 
 ```bash
-cp terraform/example.json terraform/my.json      # set aws_profile, env, db_password
+cp terraform/example.json terraform/my.json      # set aws_profile, env, console_auth_password
 terraform -chdir=terraform init
 terraform -chdir=terraform apply -var-file=my.json
 terraform -chdir=terraform output                 # db_url, db_ro_url
@@ -101,7 +101,7 @@ with public Function URLs, and one scoped IAM role. The bucket name is global on
 
 ### 2. Open the console
 
-Open `db_url` in a browser, sign in with `db_user` / `db_password`. Create a database, create a table
+Open `db_url` in a browser, sign in with `console_auth_username` / `console_auth_password`. Create a database, create a table
 (STRICT by default), add columns, edit rows, run SQL. Every operation shows server time and whether it hit the
 `/tmp` cache or went to S3.
 

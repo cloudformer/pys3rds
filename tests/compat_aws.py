@@ -39,9 +39,9 @@ def pytest_configure(config):
         pytest.exit(f"--aws: {path} not found (looked in terraform/ and as given)", returncode=4)
     with open(aws["var_file"], encoding="utf-8") as f:
         aws["vars"] = json.load(f)
-    if aws["vars"].get("endpoint_auth", "NONE") != "NONE":
-        pytest.exit(f"--aws: {path} deploys endpoint_auth={aws['vars']['endpoint_auth']}; the tests sign in "
-                    "with user / password, which needs endpoint_auth NONE", returncode=4)
+    if aws["vars"].get("function_url_auth", "NONE") != "NONE":
+        pytest.exit(f"--aws: {path} deploys function_url_auth={aws['vars']['function_url_auth']}; the tests sign in "
+                    "with user / password, which needs function_url_auth NONE", returncode=4)
     r = subprocess.run(["terraform", f"-chdir={os.path.join(ROOT, 'terraform')}", "output", "-json"],
                        capture_output=True, text=True)
     if r.returncode:

@@ -2,7 +2,7 @@ data "aws_caller_identity" "me" {}
 
 locals {
   prefix = "db/" # fixed layout in every environment: s3://<bucket>/db/<db>.sqlite
-  role   = "${var.name}-lambda-role"
+  role   = "${var.project_name}-lambda-role"
 }
 
 # ---------------- S3: every database file lives in this one private bucket ----------------
@@ -73,7 +73,7 @@ data "archive_file" "db_code" {
 
 # ---------------- Lambda 1: the database (DataGrip-style web console) ----------------
 resource "aws_lambda_function" "db" {
-  function_name    = "${var.name}-db-lambda"
+  function_name    = "${var.project_name}-db-lambda"
   role             = aws_iam_role.lambda.arn
   runtime          = "python3.12"
   handler          = "lambda_function.lambda_handler"
@@ -89,8 +89,8 @@ resource "aws_lambda_function" "db" {
     variables = {
       DB_BUCKET   = aws_s3_bucket.db.bucket
       DB_PREFIX   = local.prefix
-      DB_USER     = var.db_user
-      DB_PASSWORD = var.db_password
+      DB_USER     = var.console_auth_username
+      DB_PASSWORD = var.console_auth_password
       CONSOLE     = var.console ? "1" : "0"
     }
   }
@@ -100,7 +100,7 @@ resource "aws_lambda_function" "db" {
 # ---------------- Lambda 1b: read-only endpoint (same code + READONLY=1, unlimited read concurrency) ----------------
 # not a replica: it reads the same S3 file as the writer, zero copy, zero lag; just a second entrance.
 resource "aws_lambda_function" "db_ro" {
-  function_name    = "${var.name}-db-ro-lambda"
+  function_name    = "${var.project_name}-db-ro-lambda"
   role             = aws_iam_role.lambda.arn
   runtime          = "python3.12"
   handler          = "lambda_function.lambda_handler"
@@ -114,8 +114,8 @@ resource "aws_lambda_function" "db_ro" {
     variables = {
       DB_BUCKET   = aws_s3_bucket.db.bucket
       DB_PREFIX   = local.prefix
-      DB_USER     = var.db_user
-      DB_PASSWORD = var.db_password
+      DB_USER     = var.console_auth_username
+      DB_PASSWORD = var.console_auth_password
       READONLY    = "1"
       CONSOLE     = var.console ? "1" : "0"
     }
@@ -124,7 +124,7 @@ resource "aws_lambda_function" "db_ro" {
 
 resource "aws_lambda_function_url" "db_ro" {
   function_name      = aws_lambda_function.db_ro.function_name
-  authorization_type = var.endpoint_auth
+  authorization_type = var.function_url_auth
   cors {
     allow_origins = ["*"]
     allow_methods = ["*"]
@@ -133,7 +133,7 @@ resource "aws_lambda_function_url" "db_ro" {
 }
 
 resource "aws_lambda_permission" "db_ro_url" {
-  count                  = var.endpoint_auth == "NONE" ? 1 : 0
+  count                  = var.function_url_auth == "NONE" ? 1 : 0
   statement_id           = "AllowPublicFunctionUrl"
   action                 = "lambda:InvokeFunctionUrl"
   function_name          = aws_lambda_function.db_ro.function_name
@@ -142,7 +142,7 @@ resource "aws_lambda_permission" "db_ro_url" {
 }
 
 resource "aws_lambda_permission" "db_ro_url_invoke" {
-  count                    = var.endpoint_auth == "NONE" ? 1 : 0
+  count                    = var.function_url_auth == "NONE" ? 1 : 0
   statement_id             = "AllowPublicFunctionUrlInvoke"
   action                   = "lambda:InvokeFunction"
   function_name            = aws_lambda_function.db_ro.function_name
@@ -151,14 +151,14 @@ resource "aws_lambda_permission" "db_ro_url_invoke" {
 }
 
 # ---------------- Function URLs ----------------
-# endpoint_auth = NONE:    public URL, our user/password is the only gate. A public URL
-#                          needs BOTH permission statements (AWS requirement since Oct 2025):
+# function_url_auth = NONE:    public URL, our user/password is the only gate. A public URL
+#                              needs BOTH permission statements (AWS requirement since Oct 2025):
 #                            lambda:InvokeFunctionUrl  with FunctionUrlAuthType = NONE
 #                            lambda:InvokeFunction     with InvokedViaFunctionUrl = true
-# endpoint_auth = AWS_IAM: AWS verifies SigV4 + IAM first; no public permissions are created.
+# function_url_auth = AWS_IAM: AWS verifies SigV4 + IAM first; no public permissions are created.
 resource "aws_lambda_function_url" "db" {
   function_name      = aws_lambda_function.db.function_name
-  authorization_type = var.endpoint_auth
+  authorization_type = var.function_url_auth
   cors {
     allow_origins = ["*"]
     allow_methods = ["*"]
@@ -167,7 +167,7 @@ resource "aws_lambda_function_url" "db" {
 }
 
 resource "aws_lambda_permission" "db_url" {
-  count                  = var.endpoint_auth == "NONE" ? 1 : 0
+  count                  = var.function_url_auth == "NONE" ? 1 : 0
   statement_id           = "AllowPublicFunctionUrl"
   action                 = "lambda:InvokeFunctionUrl"
   function_name          = aws_lambda_function.db.function_name
@@ -176,7 +176,7 @@ resource "aws_lambda_permission" "db_url" {
 }
 
 resource "aws_lambda_permission" "db_url_invoke" {
-  count                    = var.endpoint_auth == "NONE" ? 1 : 0
+  count                    = var.function_url_auth == "NONE" ? 1 : 0
   statement_id             = "AllowPublicFunctionUrlInvoke"
   action                   = "lambda:InvokeFunction"
   function_name            = aws_lambda_function.db.function_name

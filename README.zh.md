@@ -63,7 +63,7 @@ s3rds 没有实例，两次请求之间什么都不在运行。Lambda 在永久�
 | 实例 endpoint | db lambda 的 Function URL |
 | 实例里的一个 database | 桶里的一个 `.sqlite` 对象 |
 | 连接串里的 `database=` | URL 路径 `/api/db/{name}` |
-| 用户名 / 密码 | HTTP Basic（`db_user` / `db_password`） |
+| 用户名 / 密码 | HTTP Basic（`console_auth_username` / `console_auth_password`） |
 | 数据目录 | `s3://<bucket>/db/` |
 | `CREATE DATABASE` | `POST /api/databases` |
 
@@ -74,7 +74,7 @@ s3rds 没有实例，两次请求之间什么都不在运行。Lambda 在永久�
 **Terraform**
 
 ```bash
-cp terraform/example.json terraform/my.json      # 改 aws_profile、env、db_password
+cp terraform/example.json terraform/my.json      # 改 aws_profile、env、console_auth_password
 terraform -chdir=terraform init
 terraform -chdir=terraform apply -var-file=my.json
 terraform -chdir=terraform output                 # db_url、db_ro_url
@@ -97,7 +97,7 @@ aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
 
 ### 2. 打开控制台
 
-浏览器打开 `db_url`，用 `db_user` / `db_password` 登录。建库、建表（默认 STRICT）、加列、改行、跑 SQL。
+浏览器打开 `db_url`，用 `console_auth_username` / `console_auth_password` 登录。建库、建表（默认 STRICT）、加列、改行、跑 SQL。
 每次操作都显示服务端耗时，以及这次是命中 `/tmp` 缓存还是去了 S3。
 
 ### 3. 程序连接

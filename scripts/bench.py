@@ -4,14 +4,14 @@
 Everything is discovered automatically; just run it:
   python3 scripts/bench.py
 Optional arguments (any order, recognised by shape):
-  xxx.json  the var file (default: the json under terraform/ that has db_user)
+  xxx.json  the var file (default: the json under terraform/ that has console_auth_username)
   a number  iterations per group (default 30)
   anything else  the database name (default benchdb)
 e.g. python3 scripts/bench.py terraform/real-srds.json mt5test 100
 
 Discovery:
   endpoint   <- terraform output -raw db_url (run in ../terraform)
-  user/pwd   <- db_user / db_password from the var file
+  user/pwd   <- console_auth_username / console_auth_password from the var file
 
 Output: for reads and writes, the cold-start first call, min/p50/p95/max, operations per second.
 Cleans up its own table (DROP TABLE) at the end; the database file itself belongs to terraform.
@@ -37,8 +37,8 @@ def load_conn(varfile=None):
     if varfile:
         with open(varfile) as fp:
             cfg = json.load(fp)
-        if "db_user" not in cfg:
-            sys.exit(f"{varfile} has no db_user / db_password")
+        if "console_auth_username" not in cfg:
+            sys.exit(f"{varfile} has no console_auth_username / console_auth_password")
     else:
         for f in sorted(os.listdir(TF_DIR)):
             if f.endswith(".json"):
@@ -47,18 +47,18 @@ def load_conn(varfile=None):
                         data = json.load(fp)
                 except (json.JSONDecodeError, OSError):
                     continue
-                if "db_user" in data:
+                if "console_auth_username" in data:
                     cfg = data
                     break
         if not cfg:
-            sys.exit("no var file with db_user under terraform/ (e.g. real-srds.json)")
+            sys.exit("no var file with console_auth_username under terraform/ (e.g. real-srds.json)")
 
     r = subprocess.run(["terraform", "output", "-raw", "db_url"],
                        cwd=TF_DIR, capture_output=True, text=True)
     url = r.stdout.strip()
     if r.returncode != 0 or not url.startswith("http"):
         sys.exit(f"cannot read db_url (terraform apply first?):\n{r.stderr.strip()}")
-    return url, cfg["db_user"], cfg["db_password"]
+    return url, cfg["console_auth_username"], cfg["console_auth_password"]
 
 
 def bench(label, fn, n):

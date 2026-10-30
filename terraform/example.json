@@ -4,11 +4,10 @@
   "assume_role_arn": "",
 
   "env": "dev",
-  "name": "srds",
+  "project_name": "srds",
 
-  "db_user": "admin",
-  "db_password": "CHANGE-ME",
-
-  "endpoint_auth": "NONE",
-  "console": true
+  "console": true,
+  "function_url_auth": "NONE",
+  "console_auth_username": "admin",
+  "console_auth_password": "CHANGE-ME"
 }
