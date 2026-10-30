@@ -108,7 +108,9 @@ Open `db_url` in a browser and sign in with `console_auth_username` / `console_a
 ### Connect from code
 
 ```bash
-pip install s3rds
+pip install s3rds                # s3rds.sqlite, SQLAlchemy (sqlite+s3rds://), Django (ENGINE s3rds.sqlite): no dependencies
+pip install "s3rds[mysql]"       # + s3rds.pymysql      (brings sqlglot, the MySQL -> SQLite translation)
+pip install "s3rds[postgres]"    # + s3rds.psycopg2     (the same for PostgreSQL)
 ```
 
 ```python
@@ -150,31 +152,37 @@ curl -u admin:password -d '{"sql":"SELECT * FROM posts WHERE id = ?","params":[1
 
 ## Limits
 
-| Driver | You write | Not supported (raises `NotSupportedError`) |
-|---|---|---|
-| `s3rds.sqlite` | SQLite, no translation; SQLAlchemy and Django go through it | `create_function` (would run on the server) |
-| `s3rds.pymysql` | MySQL, translated to SQLite on the client (sqlglot); pymysql's types and error codes | procedures, triggers, `FULLTEXT`, `FOR UPDATE`, `LOCK TABLES`, users |
-| `s3rds.psycopg2` | PostgreSQL, translated the same way; psycopg2's `extras` / `errors` / `extensions` | functions, triggers, `LISTEN`, `COPY`, locks, sequences, arrays |
-
 Size: best under ~20 MB (warm reads 20–50 ms, writes a few hundred ms); above ~50 MB move to RDS —
 [MIGRATION.md](MIGRATION.md). Not for high-concurrency OLTP.
 
 ## Compatibility
 
+| You use | Kind | Tested versions | Not supported (raises `NotSupportedError`) |
+|---|---|---|---|
+| `sqlite3` → `s3rds.sqlite` | **native**: SQLite SQL, no translation | Python 3.9 – 3.13 | `create_function` (would run on the server) |
+| SQLAlchemy → `sqlite+s3rds://` | **native**: SQLAlchemy's SQLite dialect writes the SQL | SQLAlchemy 2.0 | `regexp_match` |
+| Django → `ENGINE "s3rds.sqlite"` | **native**: Django's SQLite backend writes the SQL | Django 4.2, 5.2, 6.1 | `__regex`, time-zone conversion in queries, `order_by("?")`, `MD5` / `SHA*`, `StdDev` / `Variance` |
+| `pymysql` → `s3rds.pymysql` | **translated**: MySQL → SQLite on the client (sqlglot) | vs MySQL 8.0 | procedures, triggers, `FULLTEXT`, `SELECT … FOR UPDATE`, `LOCK TABLES`, users |
+| `psycopg2` → `s3rds.psycopg2` | **translated**: PostgreSQL → SQLite on the client (sqlglot) | vs PostgreSQL 16 | functions, triggers, `LISTEN`, `COPY`, locks, sequences, arrays |
+
+Native is the most reliable: the SQL is SQLite's to begin with. Translation has edges, each listed in the report.
+**For a new project, prefer SQLAlchemy or Django.**
+
 Every feature is one test run with the same SQL on the reference — MySQL 8.0 and PostgreSQL 16 in Docker,
 `sqlite3`, SQLAlchemy and Django on SQLite — and on s3rds, comparing rows, Python types, rowcount and error codes.
-The generated result: **[tests/compat/REPORT.md](tests/compat/REPORT.md)**.
+CI runs every Python × Django combination above. The generated result, every feature and every gap:
+**[tests/compat/REPORT.md](tests/compat/REPORT.md)**.
 
 <details>
 <summary>Verified versions</summary>
 
 | | Version |
 |---|---|
-| Python (client) | 3.9 – 3.13 (regression on 3.9.6, full comparison on 3.13.7) |
+| Python (client) | 3.9, 3.10, 3.11, 3.12, 3.13 (CI) |
 | Server | AWS Lambda `python3.12`, SQLite 3.50.4 (`pip install "s3rds[server]"`) |
-| sqlglot | 30.24 |
+| sqlglot | 30.24, only with `s3rds[mysql]` / `s3rds[postgres]` |
 | SQLAlchemy | 2.0 (tested 2.0.55), `pip install "s3rds[sqlalchemy]"` |
-| Django | 6.1 (tested 6.1.2, Python ≥ 3.12), `pip install "s3rds[django]"` |
+| Django | 4.2 (Python 3.9, 3.10), 5.2 (3.11, 3.12), 6.1 (3.12, 3.13) in CI, `pip install "s3rds[django]"` |
 | References | MySQL 8.0.46, PostgreSQL 16.4 in Docker |
 </details>
 

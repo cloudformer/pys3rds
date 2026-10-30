@@ -6,7 +6,7 @@ transactions over a server that keeps no session, and the schema editor (migrati
 the connection). Every test is one feature; a scenario gets two database aliases (`other` plays a second client)
 and returns plain values. The reference is Django's SQLite backend on the server's pinned SQLite module.
 
-    pip install pytest boto3 django==6.1.2 sqlean.py==3.50.4.5
+    pip install pytest boto3 "django>=4.2,<6.2" sqlean.py==3.50.4.5     # CI: 4.2, 5.2 and 6.1
     python3 -m pytest tests/compat/test_django.py -v
 """
 import datetime

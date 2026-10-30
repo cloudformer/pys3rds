@@ -26,11 +26,13 @@ while nobody uses it. Deploy it once with Terraform from the
 **Python drivers for [s3rds](https://github.com/cloudformer/s3rds) — a truly serverless RDS:
 a Lambda URL as your database endpoint, SQLite on S3, ≈ $0 when idle.**
 
-One install, one dependency (sqlglot, used only by `s3rds.pymysql` and `s3rds.psycopg2`). Each driver is a submodule **named after the standard
-client it mirrors**, so moving to a real database is a one-line import change and nothing else:
+No dependencies for the native paths; the translating drivers take an extra. Each driver is a submodule **named after
+the standard client it mirrors**, so moving to a real database is a one-line import change and nothing else:
 
 ```bash
-pip install s3rds    # s3rds.sqlite, s3rds.pymysql, s3rds.psycopg2, sqlite+s3rds:// for SQLAlchemy, ENGINE s3rds.sqlite for Django
+pip install s3rds                # s3rds.sqlite, sqlite+s3rds:// for SQLAlchemy, ENGINE s3rds.sqlite for Django
+pip install "s3rds[mysql]"       # + s3rds.pymysql   (sqlglot: MySQL -> SQLite)
+pip install "s3rds[postgres]"    # + s3rds.psycopg2  (sqlglot: PostgreSQL -> SQLite)
 ```
 
 ```python
@@ -55,13 +57,15 @@ conn.transaction([                                 # all-or-nothing, single S3 w
 ])
 ```
 
-| Submodule | SQL dialect | Mirrors | Status |
-|---|---|---|---|
-| `s3rds.sqlite` | SQLite (no translation) | pymysql-shaped API | available |
-| `s3rds.pymysql` | MySQL, translated on the client | pymysql | available |
-| `s3rds.psycopg2` | PostgreSQL, translated on the client | psycopg2 (`extras`, `errors`, `extensions`) | available |
-| `sqlite+s3rds://` | SQLite, written by SQLAlchemy | SQLAlchemy Core / ORM | available — the URL is the only change |
-| `ENGINE: "s3rds.sqlite"` | SQLite, written by Django | Django's SQLite backend | available — the database settings are the only change |
+| Submodule | Kind | SQL dialect | Mirrors | Install |
+|---|---|---|---|---|
+| `s3rds.sqlite` | native | SQLite (no translation) | pymysql-shaped API | `s3rds` |
+| `sqlite+s3rds://` | native | SQLite, written by SQLAlchemy | SQLAlchemy 2.0 Core / ORM | `s3rds` (+ SQLAlchemy) |
+| `ENGINE: "s3rds.sqlite"` | native | SQLite, written by Django | Django 4.2, 5.2, 6.1 | `s3rds` (+ Django) |
+| `s3rds.pymysql` | translated | MySQL, translated on the client | pymysql | `"s3rds[mysql]"` |
+| `s3rds.psycopg2` | translated | PostgreSQL, translated on the client | psycopg2 (`extras`, `errors`, `extensions`) | `"s3rds[postgres]"` |
+
+Native is the most reliable: the SQL is SQLite's to begin with. For a new project, prefer SQLAlchemy or Django.
 
 **SQLAlchemy** (Core and ORM): only the URL changes — SQLAlchemy's own SQLite dialect writes the SQL,
 `s3rds.sqlite` replaces the standard library's `sqlite3` underneath.
@@ -111,11 +115,11 @@ What the report was verified with; the full report: [REPORT.md](https://github.c
 
 | | Version | Fixed by |
 |---|---|---|
-| Python (client) | 3.9 – 3.13: regression suite on 3.9.6, full comparison on 3.13.7 | `requires-python = ">=3.9"` |
+| Python (client) | 3.9, 3.10, 3.11, 3.12, 3.13, each in CI | `requires-python = ">=3.9"` |
 | Server runtime | AWS Lambda `python3.12` | `terraform/main.tf` |
 | SQLite (server engine) | 3.50.4, shipped in the Lambda zip (the runtime's own is 3.40.0) | extra `pip install "s3rds[server]"` = `sqlean.py==3.50.4.5` |
-| sqlglot (MySQL translation) | 30.24 | dependency `sqlglot>=30.24,<31` |
+| sqlglot (MySQL / PostgreSQL translation) | 30.24 | extras `"s3rds[mysql]"` / `"s3rds[postgres]"` = `sqlglot>=30.24,<31` |
 | SQLAlchemy | 2.0, tested on 2.0.55 | extra `pip install "s3rds[sqlalchemy]"` = `SQLAlchemy>=2.0,<2.1` |
-| Django | 6.1, tested on 6.1.2 (Python ≥ 3.12) | extra `pip install "s3rds[django]"` = `Django>=6.1,<6.2` |
+| Django | 4.2 (Python 3.9, 3.10), 5.2 (3.11, 3.12), 6.1 (3.12, 3.13), each in CI | extra `pip install "s3rds[django]"` = `Django>=4.2,<6.2` |
 | MySQL (reference) | 8.0.46 in Docker | `tests/compat/docker-compose.yml`: `mysql:8.0.46` |
 

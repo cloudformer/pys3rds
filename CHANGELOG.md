@@ -29,8 +29,9 @@ Security fixes and optional sqlglot. **Server redeploy needed** (1, 2, 7) and **
    `import s3rds`. The Lambda zip drops sqlglot (~0.8 MB).
 8. From this release on, upgrades do not break users: the extras, import paths, the SQLAlchemy URL, the HTTP API
    and the Terraform keys only grow (`tests/test_public_surface.py` pins them).
-9. CI runs a Python × Django matrix: 3.9 and 3.10 with Django 4.2, 3.11 and 3.12 with 5.2, 3.12 and 3.13 with 6.1.
-   The `django` extra and the classifiers widen only to what passes there.
+9. Wider compatibility, every combination tested in CI (275 tests each): Python 3.9 – 3.13; Django 4.2 (Python 3.9,
+   3.10), 5.2 (3.11, 3.12) and 6.1 (3.12, 3.13). The `django` extra is now `Django>=4.2,<6.2` (was 6.1 only).
+   Django 4.2 needed one fix (no `init_commands` before Django 5.1).
 
 ## 0.3.3
 

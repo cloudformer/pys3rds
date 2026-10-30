@@ -17,8 +17,14 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Framework :: Django",
+  "Framework :: Django :: 4.2",
+  "Framework :: Django :: 5.2",
+  "Framework :: Django :: 6.1",
   "Topic :: Database",
   "Topic :: Database :: Front-Ends",
 ]
@@ -32,7 +38,7 @@ mysql = ["sqlglot>=30.24,<31"]       # s3rds.pymysql
 postgres = ["sqlglot>=30.24,<31"]    # s3rds.psycopg2
 server = ["sqlean.py==3.50.4.5"]      # the Lambda: s3rds.server + SQLite 3.50.4 instead of the runtime's 3.40.0
 sqlalchemy = ["SQLAlchemy>=2.0,<2.1"]   # the series the compatibility report verified; pip install "s3rds[sqlalchemy]"
-django = ["Django>=6.1,<6.2"]          # the same for Django (ENGINE "s3rds.sqlite"); Django 6.1 needs Python >= 3.12
+django = ["Django>=4.2,<6.2"]          # ENGINE "s3rds.sqlite"; CI runs 4.2 (Python 3.9, 3.10), 5.2 (3.11, 3.12), 6.1 (3.12, 3.13)
 
 [project.entry-points."sqlalchemy.dialects"]
 "sqlite.s3rds" = "s3rds.sqlite:SQLAlchemyDialect"
@@ -53,13 +59,13 @@ packages = ["s3rds", "s3rds.sqlite", "s3rds.psycopg2", "s3rds.server"]
 
 # The versions tests/compat/REPORT.md was verified with; README.md, README.zh.md and client/README.md state the same.
 [tool.s3rds.verified]
-python = ["3.9.6", "3.13.7"]       # the client: regression suite on 3.9.6, the full comparison on 3.13.7
+python = ["3.9", "3.10", "3.11", "3.12", "3.13"]   # the client: the full suite in CI (.github/workflows/test.yml)
 lambda_runtime = "python3.12"      # the server (terraform/main.tf)
 sqlite = "3.50.4"                  # the server's engine, shipped in the Lambda zip (the runtime's own is 3.40.0)
 sqlean = "3.50.4.5"                # sqlean.py, which carries it (extra "server")
 sqlglot = "30.24.0"
 sqlalchemy = "2.0.55"
-django = "6.1.2"
+django = ["4.2", "5.2", "6.1"]      # series; CI installs the latest release of each
 mysql_reference = "8.0.46"         # tests/compat/docker-compose.yml
 postgres_reference = "16.4"       # the same
 psycopg2 = "2.9.12"                # the reference client (psycopg2-binary)
