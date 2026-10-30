@@ -26,8 +26,10 @@ Security fixes and optional sqlglot. **Server redeploy needed** (1, 2, 7) and **
    server are the standard library. The translating drivers take an extra: `pip install "s3rds[mysql]"` for
    `s3rds.pymysql`, `"s3rds[postgres]"` for `s3rds.psycopg2`; without it their import raises `ImportError` naming the
    extra (it used to fail at the first query). `s3rds.pymysql` / `s3rds.psycopg2` load on first use, not with
-   `import s3rds`. The Lambda zip drops sqlglot (~0.8 MB). **Upgrading pymysql / psycopg2 users: add the extra.**
-8. CI runs a Python × Django matrix: 3.9 and 3.10 with Django 4.2, 3.11 and 3.12 with 5.2, 3.12 and 3.13 with 6.1.
+   `import s3rds`. The Lambda zip drops sqlglot (~0.8 MB).
+8. From this release on, upgrades do not break users: the extras, import paths, the SQLAlchemy URL, the HTTP API
+   and the Terraform keys only grow (`tests/test_public_surface.py` pins them).
+9. CI runs a Python × Django matrix: 3.9 and 3.10 with Django 4.2, 3.11 and 3.12 with 5.2, 3.12 and 3.13 with 6.1.
    The `django` extra and the classifiers widen only to what passes there.
 
 ## 0.3.3

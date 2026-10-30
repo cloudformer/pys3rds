@@ -62,6 +62,11 @@ s3rds (github.com/cloudformer/s3rds) is the reference implementation; when in do
 11. **English everywhere except README.zh.md.** UI text, code, comments, commit messages, CHANGELOG, TASKS —
     all English; the only Chinese file is README.zh.md (same section order as README.md). The series footer
     links to the topic page; the series table lives only in the template repository.
+12. **From 0.3.4 on, an upgrade never breaks a user.** The public surface — the pip extras (`mysql`, `postgres`,
+    `server`, `sqlalchemy`, `django`), the import paths (`s3rds.sqlite`, `s3rds.pymysql`, `s3rds.psycopg2`,
+    `s3rds.sqlite.base`, `s3rds.server.lambda_function.lambda_handler`), the SQLAlchemy URL `sqlite+s3rds://`, the
+    HTTP API under `/api/` and the Terraform var-file keys — only grows: add, never rename or remove; version
+    ranges only widen. `tests/test_public_surface.py` pins it; a change that has to break it is Frank's call first.
 
 ## How we work
 
@@ -92,10 +97,9 @@ s3rds (github.com/cloudformer/s3rds) is the reference implementation; when in do
   reference service: add it there.
 - The package name is read from `client/pyproject.toml` by `tests/conftest.py` (`PACKAGE`); nothing else
   hard-codes it.
-- Release: test first (real var file keeps `"server_package": "./client[server]"`, the working tree: pytest,
-  apply, the `--aws` comparison), then bump `version` in `client/pyproject.toml`, `__version__` in
-  `client/<package>/__init__.py` and `server_package` in `terraform/example.json` (`"<package>[server]==X.Y.Z"`),
-  CHANGELOG entry, one commit, `git tag vX.Y.Z && git push --tags`. Once per package Frank adds the PyPI
+- Release: test first (Terraform always deploys the working tree, `./client[server]` in `terraform/main.tf`, not a
+  variable: pytest, apply, the `--aws` comparison), then bump `version` in `client/pyproject.toml` and `__version__`
+  in `client/<package>/__init__.py`, CHANGELOG entry, one commit, `git tag vX.Y.Z && git push --tags`. Once per package Frank adds the PyPI
   trusted publisher (owner cloudformer, this repo, `publish.yml`, environment `pypi`).
 
 ## Layout (do not move things)

@@ -1,10 +1,13 @@
 """The server's HTTP layer: validation before anything else, atomic /tx, the read-only endpoint."""
 import base64
 import json
+import os
+import uuid
 
 import pytest
 
 from s3rds.server import lambda_function as lf
+from s3rds.server import s3_sqlite
 
 AUTH = "Basic " + base64.b64encode(b"admin:pw").decode()
 
@@ -43,6 +46,84 @@ def test_console_on_and_off(monkeypatch):
 
 def test_bad_credentials(db):
     assert call("GET", "/api/databases", auth="Basic " + base64.b64encode(b"a:b").decode())[0] == 401
+
+
+@pytest.mark.parametrize("user, password", [("", ""), ("admin", ""), ("", "pw")])
+def test_no_credentials_configured_is_503(db, monkeypatch, user, password):
+    monkeypatch.setattr(lf, "DB_USER", user)
+    monkeypatch.setattr(lf, "DB_PASSWORD", password)
+    monkeypatch.setattr(lf, "ALLOW_NO_AUTH", False)
+    for auth in (AUTH, None, "Basic " + base64.b64encode(b"admin:").decode()):
+        status, data = call("GET", "/api/databases", auth=auth)
+        assert status == 503 and "no credentials configured" in data["error"]
+
+
+def test_allow_no_auth_answers_with_a_warning(db, monkeypatch):
+    monkeypatch.setattr(lf, "DB_USER", "")
+    monkeypatch.setattr(lf, "DB_PASSWORD", "")
+    monkeypatch.setattr(lf, "ALLOW_NO_AUTH", True)
+    event = {"requestContext": {"http": {"method": "GET"}}, "rawPath": "/api/databases", "headers": {}}
+    resp = lf.lambda_handler(event, None)
+    assert resp["statusCode"] == 200 and resp["headers"]["x-s3rds-warning"] == "no-auth"
+
+
+def test_configured_credentials_carry_no_warning(db):
+    event = {"requestContext": {"http": {"method": "GET"}}, "rawPath": "/api/databases",
+             "headers": {"authorization": AUTH}}
+    assert "x-s3rds-warning" not in lf.lambda_handler(event, None)["headers"]
+
+
+# ---------------- one request, one database file: ATTACH / DETACH / VACUUM INTO are refused ----------------
+
+@pytest.fixture
+def other_cache(db, bucket):
+    """A second database e with a row, cached in /tmp: the file an ATTACH from d would aim at."""
+    assert call("POST", "/api/databases", {"name": "e"})[0] == 201
+    assert call("POST", "/api/db/e/query", {"sql": "CREATE TABLE s (v TEXT)"})[0] == 200
+    assert call("POST", "/api/db/e/query", {"sql": "INSERT INTO s VALUES ('orig')"})[0] == 200
+    path = s3_sqlite._local_path(bucket, "db/e.sqlite")
+    assert os.path.exists(path)
+    return path
+
+
+def _content(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+@pytest.mark.parametrize("readonly", [True, False], ids=["ro", "rw"])
+def test_attach_another_cache_is_403(db, other_cache, monkeypatch, readonly):
+    monkeypatch.setattr(lf, "READONLY", readonly)
+    before = (s3_sqlite._fingerprint(other_cache), _content(other_cache))
+    objects, puts = dict(db.objects), db.puts
+    attach = {"sql": f"ATTACH DATABASE '{other_cache}' AS o"}
+    write = {"sql": "INSERT INTO o.s VALUES ('tampered')"}
+    requests = [
+        ("/api/db/d/query", attach),
+        ("/api/db/d/query", {"sql": "DETACH o"}),
+        ("/api/db/d/tx", {"statements": [attach, write]}),
+        ("/api/db/d/replay", {"statements": [attach, write], "commit": False}),
+        ("/api/db/d/replay", {"statements": [attach, write], "commit": True}),
+    ]
+    for path, body in requests:
+        status, data = call("POST", path, body)
+        assert status == 403, (path, body, data)
+        assert "ATTACH / DETACH / VACUUM INTO are not allowed" in data["error"]
+    assert (s3_sqlite._fingerprint(other_cache), _content(other_cache)) == before  # the other cache is untouched
+    assert db.puts == puts and db.objects == objects                               # S3: no new version of either
+    _, data = call("POST", "/api/db/e/query", {"sql": "SELECT v FROM s"})
+    assert data["rows"] == [["orig"]]
+
+
+@pytest.mark.parametrize("readonly", [True, False], ids=["ro", "rw"])
+def test_vacuum_into_is_403(db, monkeypatch, readonly):
+    monkeypatch.setattr(lf, "READONLY", readonly)
+    target = f"/tmp/s3rds-test-{uuid.uuid4().hex}.sqlite"
+    puts = db.puts
+    status, data = call("POST", "/api/db/d/query", {"sql": f"VACUUM INTO '{target}'"})
+    assert status == 403 and "VACUUM INTO" in data["error"]
+    assert not os.path.exists(target)
+    assert db.puts == puts
 
 
 def test_invalid_json_is_400_before_touching_data(db):
