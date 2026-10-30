@@ -53,7 +53,8 @@ s3rds (github.com/cloudformer/s3rds) is the reference implementation; when in do
    PyPI cannot resolve relative paths.
 8. **Terraform only, every command from the repo root** (`terraform -chdir=terraform …`). `cloudformation/`
    holds only a README ("not supported yet"); a template comes back once the project is stable and someone
-   needs it — less to maintain. `example.json` is committed, real variable files are gitignored. Least-privilege IAM. Destroy must work.
+   needs it — less to maintain. `example.json` is committed, real variable files are gitignored.
+   Every Lambda gets its own log group (14 days, created by Terraform; IAM may write only there, no `CreateLogGroup`). Least-privilege IAM. Destroy must work.
 9. **Guarantees are stated and pinned by tests.** Atomicity, durability, isolation, retry policy ("fail
    rather than duplicate a write") each get one line in the README and a test.
 10. **Release = tag.** `git tag vX.Y.Z && git push --tags` runs tests, builds `client/`, publishes to PyPI via

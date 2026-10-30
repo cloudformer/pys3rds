@@ -3,6 +3,14 @@ data "aws_caller_identity" "me" {}
 locals {
   prefix = "db/" # fixed layout in every environment: s3://<bucket>/db/<db>.sqlite
   role   = "${var.project_name}-lambda-role"
+
+  # the two endpoints run the same code:
+  #   rw  the database, one writer globally (reserved concurrency 1; the ETag CAS in the code is the second guard)
+  #   ro  read-only (READONLY=1): not a replica, it reads the same S3 file, zero copy, zero lag; scales with demand
+  endpoints = {
+    rw = { function_name = "${var.project_name}-db-lambda", readonly = "0", concurrency = 1 }
+    ro = { function_name = "${var.project_name}-db-ro-lambda", readonly = "1", concurrency = -1 }
+  }
 }
 
 # ---------------- S3: every database file lives in this one private bucket ----------------
@@ -20,7 +28,39 @@ resource "aws_s3_bucket_public_access_block" "db" {
   restrict_public_buckets = true
 }
 
-# ---------------- IAM: one role for the lambdas, scoped to db/*.sqlite ----------------
+resource "aws_s3_bucket_server_side_encryption_configuration" "db" {
+  bucket = aws_s3_bucket.db.id
+  rule {
+    apply_server_side_encryption_by_default { sse_algorithm = "AES256" } # SSE-S3, no KMS cost
+  }
+}
+
+# TLS only: any request over plain HTTP is denied. Principal "*" here means "whoever asks" in a Deny,
+# so it grants nothing; the public access block above stays satisfied.
+resource "aws_s3_bucket_policy" "db" {
+  bucket = aws_s3_bucket.db.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "DenyInsecureTransport"
+      Effect    = "Deny"
+      Principal = "*"
+      Action    = "s3:*"
+      Resource  = [aws_s3_bucket.db.arn, "${aws_s3_bucket.db.arn}/*"]
+      Condition = { Bool = { "aws:SecureTransport" = "false" } }
+    }]
+  })
+  depends_on = [aws_s3_bucket_public_access_block.db]
+}
+
+# ---------------- logs: one group per Lambda, kept 14 days ----------------
+resource "aws_cloudwatch_log_group" "db" {
+  for_each          = local.endpoints
+  name              = "/aws/lambda/${each.value.function_name}"
+  retention_in_days = 14
+}
+
+# ---------------- IAM: one role, scoped to db/*.sqlite and the two log groups ----------------
 resource "aws_iam_role" "lambda" {
   name = local.role
   assume_role_policy = jsonencode({
@@ -41,8 +81,8 @@ resource "aws_iam_role_policy" "lambda" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = "arn:aws:logs:*:*:*"
+        Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = [for g in aws_cloudwatch_log_group.db : "${g.arn}:*"]
       },
       {
         Effect   = "Allow"
@@ -71,9 +111,10 @@ data "archive_file" "db_code" {
   output_path = "${path.module}/.build/db.zip"
 }
 
-# ---------------- Lambda 1: the database (DataGrip-style web console) ----------------
+# ---------------- Lambda: the database (web console + API), read/write and read-only ----------------
 resource "aws_lambda_function" "db" {
-  function_name    = "${var.project_name}-db-lambda"
+  for_each         = local.endpoints
+  function_name    = each.value.function_name
   role             = aws_iam_role.lambda.arn
   runtime          = "python3.12"
   handler          = "s3rds.server.lambda_function.lambda_handler"
@@ -82,8 +123,7 @@ resource "aws_lambda_function" "db" {
   timeout          = 15
   memory_size      = 256
 
-  # one writer globally: no concurrent writes by construction (the ETag CAS in the code is the second guard)
-  reserved_concurrent_executions = 1
+  reserved_concurrent_executions = each.value.concurrency
 
   environment {
     variables = {
@@ -91,95 +131,77 @@ resource "aws_lambda_function" "db" {
       DB_PREFIX   = local.prefix
       DB_USER     = var.console_auth_username
       DB_PASSWORD = var.console_auth_password
+      READONLY    = each.value.readonly
       CONSOLE     = var.console ? "1" : "0"
     }
   }
-}
 
-# TODO: review — Lambda 1 and 1b differ only in READONLY and the reserved concurrency: one for_each over {rw, ro}.
-# ---------------- Lambda 1b: read-only endpoint (same code + READONLY=1, unlimited read concurrency) ----------------
-# not a replica: it reads the same S3 file as the writer, zero copy, zero lag; just a second entrance.
-resource "aws_lambda_function" "db_ro" {
-  function_name    = "${var.project_name}-db-ro-lambda"
-  role             = aws_iam_role.lambda.arn
-  runtime          = "python3.12"
-  handler          = "s3rds.server.lambda_function.lambda_handler"
-  filename         = data.archive_file.db_code.output_path
-  source_code_hash = data.archive_file.db_code.output_base64sha256
-  timeout          = 15
-  memory_size      = 256
-  # no reserved concurrency: reads do not conflict, scale with demand
-
-  environment {
-    variables = {
-      DB_BUCKET   = aws_s3_bucket.db.bucket
-      DB_PREFIX   = local.prefix
-      DB_USER     = var.console_auth_username
-      DB_PASSWORD = var.console_auth_password
-      READONLY    = "1"
-      CONSOLE     = var.console ? "1" : "0"
-    }
-  }
-}
-
-resource "aws_lambda_function_url" "db_ro" {
-  function_name      = aws_lambda_function.db_ro.function_name
-  authorization_type = var.function_url_auth
-  cors {
-    allow_origins = ["*"]
-    allow_methods = ["*"]
-    allow_headers = ["content-type", "authorization"]
-  }
-}
-
-resource "aws_lambda_permission" "db_ro_url" {
-  count                  = var.function_url_auth == "NONE" ? 1 : 0
-  statement_id           = "AllowPublicFunctionUrl"
-  action                 = "lambda:InvokeFunctionUrl"
-  function_name          = aws_lambda_function.db_ro.function_name
-  principal              = "*"
-  function_url_auth_type = "NONE"
-}
-
-resource "aws_lambda_permission" "db_ro_url_invoke" {
-  count                    = var.function_url_auth == "NONE" ? 1 : 0
-  statement_id             = "AllowPublicFunctionUrlInvoke"
-  action                   = "lambda:InvokeFunction"
-  function_name            = aws_lambda_function.db_ro.function_name
-  principal                = "*"
-  invoked_via_function_url = true
+  depends_on = [aws_cloudwatch_log_group.db]
 }
 
 # ---------------- Function URLs ----------------
-# function_url_auth = NONE:    public URL, our user/password is the only gate. A public URL
-#                              needs BOTH permission statements (AWS requirement since Oct 2025):
-#                            lambda:InvokeFunctionUrl  with FunctionUrlAuthType = NONE
-#                            lambda:InvokeFunction     with InvokedViaFunctionUrl = true
-# function_url_auth = AWS_IAM: AWS verifies SigV4 + IAM first; no public permissions are created.
+# No CORS: the console is served by the same URL (same origin) and the drivers are not browsers.
 resource "aws_lambda_function_url" "db" {
-  function_name      = aws_lambda_function.db.function_name
+  for_each           = local.endpoints
+  function_name      = aws_lambda_function.db[each.key].function_name
   authorization_type = var.function_url_auth
-  cors {
-    allow_origins = ["*"]
-    allow_methods = ["*"]
-    allow_headers = ["content-type", "authorization"]
-  }
 }
 
-resource "aws_lambda_permission" "db_url" {
-  count                  = var.function_url_auth == "NONE" ? 1 : 0
+# function_url_auth = NONE: a public URL. AWS requires a resource policy that lets anyone invoke it, so the two
+# statements below say principal = "*" — that is what "public URL" means, not an open database: every request
+# still has to pass HTTP Basic (console_auth_username / console_auth_password) inside the Lambda, or it gets 401.
+# Since Oct 2025 AWS requires BOTH statements:
+#   lambda:InvokeFunctionUrl  with FunctionUrlAuthType = NONE
+#   lambda:InvokeFunction     with InvokedViaFunctionUrl = true (only through the URL, not a direct Invoke)
+# function_url_auth = AWS_IAM: AWS verifies SigV4 + IAM first; neither statement is created.
+resource "aws_lambda_permission" "url" {
+  for_each               = var.function_url_auth == "NONE" ? local.endpoints : {}
   statement_id           = "AllowPublicFunctionUrl"
   action                 = "lambda:InvokeFunctionUrl"
-  function_name          = aws_lambda_function.db.function_name
+  function_name          = aws_lambda_function.db[each.key].function_name
   principal              = "*"
   function_url_auth_type = "NONE"
 }
 
-resource "aws_lambda_permission" "db_url_invoke" {
-  count                    = var.function_url_auth == "NONE" ? 1 : 0
+resource "aws_lambda_permission" "url_invoke" {
+  for_each                 = var.function_url_auth == "NONE" ? local.endpoints : {}
   statement_id             = "AllowPublicFunctionUrlInvoke"
   action                   = "lambda:InvokeFunction"
-  function_name            = aws_lambda_function.db.function_name
+  function_name            = aws_lambda_function.db[each.key].function_name
   principal                = "*"
   invoked_via_function_url = true
+}
+
+# ---------------- renamed in 0.3.3 (rw / ro became one for_each): keep the deployed resources, URLs unchanged ----------------
+moved {
+  from = aws_lambda_function.db
+  to   = aws_lambda_function.db["rw"]
+}
+moved {
+  from = aws_lambda_function.db_ro
+  to   = aws_lambda_function.db["ro"]
+}
+moved {
+  from = aws_lambda_function_url.db
+  to   = aws_lambda_function_url.db["rw"]
+}
+moved {
+  from = aws_lambda_function_url.db_ro
+  to   = aws_lambda_function_url.db["ro"]
+}
+moved {
+  from = aws_lambda_permission.db_url[0]
+  to   = aws_lambda_permission.url["rw"]
+}
+moved {
+  from = aws_lambda_permission.db_ro_url[0]
+  to   = aws_lambda_permission.url["ro"]
+}
+moved {
+  from = aws_lambda_permission.db_url_invoke[0]
+  to   = aws_lambda_permission.url_invoke["rw"]
+}
+moved {
+  from = aws_lambda_permission.db_ro_url_invoke[0]
+  to   = aws_lambda_permission.url_invoke["ro"]
 }

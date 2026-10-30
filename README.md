@@ -75,8 +75,20 @@ terraform -chdir=terraform apply -var-file=my.json
 terraform -chdir=terraform output                   # db_url, db_ro_url
 ```
 
-This creates one S3 bucket (`<env>-srds-db-2026`), two Lambdas (read/write, read-only) with Function URLs and
-one scoped IAM role. `terraform -chdir=terraform destroy -var-file=my.json` removes everything, databases included.
+This creates one S3 bucket (`<env>-srds-db-2026`), two Lambdas (read/write, read-only) with Function URLs, their
+log groups and one scoped IAM role. `terraform -chdir=terraform destroy -var-file=my.json` removes everything,
+databases included.
+
+### Security
+- **Public URL, password inside**: with `function_url_auth = "NONE"` the Function URLs are public, so their resource
+  policy says `principal = "*"` — AWS requires that for a public URL, and it only lets a request *reach* the Lambda.
+  Every request must then pass HTTP Basic (`console_auth_username` / `console_auth_password`) or gets 401.
+  `function_url_auth = "AWS_IAM"` makes AWS check a SigV4 signature first (the browser console cannot sign, so it is unusable then).
+- **No CORS**: the console is served by the same URL and the drivers are not browsers.
+- **S3**: private bucket (public access blocked), SSE-S3 encryption, a bucket policy that denies any request not over TLS.
+- **IAM**: the Lambdas may read / write `db/*.sqlite`, list `db/` and write their own two log groups — nothing else.
+- **Logs**: one log group per Lambda, kept 14 days.
+- **Console off**: `"console": false` leaves the API only (`GET /` returns 404).
 
 ## Usage
 

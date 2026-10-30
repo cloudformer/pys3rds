@@ -1,6 +1,6 @@
 """s3rds server: a serverless database (SQL over HTTP, SQLite on S3).
 
-GET  /                                      index.html (web console)
+GET  /                                      index.html (web console; CONSOLE=0 -> 404, API only)
 GET  /api/databases                         list databases
 POST /api/databases {name}                  create a database
 GET  /api/db/{db}/tables                    list tables
@@ -35,6 +35,7 @@ PREFIX = os.environ.get("DB_PREFIX", "")
 DB_USER = os.environ.get("DB_USER", "")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
 READONLY = os.environ.get("READONLY") == "1"
+CONSOLE = os.environ.get("CONSOLE", "1") == "1"  # the web console at GET /; unset = on
 
 with open(os.path.join(os.path.dirname(__file__), "index.html"), encoding="utf-8") as f:
     INDEX_HTML = f.read()
@@ -379,6 +380,8 @@ def lambda_handler(event, context):
     path = event.get("rawPath", "/")
 
     if method == "GET" and path in ("/", "/index.html"):
+        if not CONSOLE:
+            return _json(404, {"error": "the web console is turned off (console = false); the API is under /api/"})
         return {
             "statusCode": 200,
             "headers": {"content-type": "text/html; charset=utf-8"},

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.3
+
+Hardening. Server redeploy (the console switch); the Terraform changes keep both Function URLs.
+
+- Terraform: a log group per Lambda kept 14 days, IAM may write only there (was `arn:aws:logs:*:*:*` with
+  `CreateLogGroup`); no CORS on the Function URLs; SSE-S3 declared and a bucket policy that denies non-TLS requests;
+  rw / ro Lambdas, URLs and permissions are one `for_each` (`moved` blocks keep the deployed resources).
+- `"console": false` now really turns the console off: `GET /` returns 404 (the setting was ignored before).
+- README: a Security section, including why the public URL's policy says `principal = "*"`.
+
 ## 0.3.2
 
 Console and docs. Server redeploy for the console.

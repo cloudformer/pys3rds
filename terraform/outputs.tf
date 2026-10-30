@@ -1,11 +1,11 @@
 output "db_url" {
   description = "The database endpoint; open it in a browser for the DataGrip-style console"
-  value       = aws_lambda_function_url.db.function_url
+  value       = aws_lambda_function_url.db["rw"].function_url
 }
 
 output "db_ro_url" {
   description = "Read-only endpoint: unlimited concurrency for read-heavy code (writes get 403)"
-  value       = aws_lambda_function_url.db_ro.function_url
+  value       = aws_lambda_function_url.db["ro"].function_url
 }
 
 output "db_bucket" {

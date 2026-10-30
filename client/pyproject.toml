@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "s3rds"
-version = "0.3.2"
+version = "0.3.3"
 description = "A truly serverless RDS on your own AWS account: Lambda URL endpoint, SQLite on S3, ≈ $0 when idle. Drivers named after the standard clients: s3rds.sqlite, s3rds.pymysql, s3rds.psycopg2; SQLAlchemy via sqlite+s3rds://, Django via ENGINE s3rds.sqlite."
 readme = "README.md"
 requires-python = ">=3.9"

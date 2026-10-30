@@ -49,7 +49,7 @@ import socket
 import urllib.parse
 import warnings
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 apilevel = "2.0"
 threadsafety = 1

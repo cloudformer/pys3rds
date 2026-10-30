@@ -191,9 +191,9 @@ dialog .form-grid { grid-template-columns: 1fr; }
 
   <div class="controls">
     <label>Database</label><select id="dbs"></select>
-    <button class="btn btn-secondary" id="newdb">＋ New database</button>
+    <button class="btn btn-secondary" id="newdb">+ New database</button>
     <label>Table</label><select id="tables"></select>
-    <button class="btn btn-secondary" id="newtable">＋ New table</button>
+    <button class="btn btn-secondary" id="newtable">+ New table</button>
     <button class="btn btn-ghost" id="refresh">refresh</button>
   </div>
 
@@ -397,13 +397,13 @@ function render(){
   $('#info-db').textContent = state.db || '-';
   const main = $('#main');
   if (!state.db){
-    main.innerHTML = '<div class="table-section"><div class="empty">Pick a database above, or click “＋ New database”</div></div>';
+    main.innerHTML = '<div class="table-section"><div class="empty">Pick a database above, or click “+ New database”</div></div>';
     return;
   }
   if (!state.table){
     main.innerHTML = `<div class="table-section"><div class="empty">${state.tables.length
       ? 'Pick a table above'
-      : 'No tables yet — click “＋ New table”, or write CREATE TABLE in the SQL box'}</div></div>`;
+      : 'No tables yet — click “+ New table”, or write CREATE TABLE in the SQL box'}</div></div>`;
     return;
   }
   if (!state.loaded){
@@ -461,7 +461,7 @@ function render(){
     </div>
 
     <div class="section-title">Structure
-      <button class="btn btn-secondary btn-small" id="addcol">＋ Add column</button>
+      <button class="btn btn-secondary btn-small" id="addcol">+ Add column</button>
     </div>
     <div class="grid-wrap"><table>
       <thead><tr><th>Field</th><th>Type</th><th>Null</th><th>Key</th><th>Default</th><th>Extra</th><th>actions</th></tr></thead>
@@ -594,7 +594,7 @@ $('#newtable').onclick = async () => {
   try {
     await api(`/api/db/${state.db}/query`, {method:'POST', body: JSON.stringify(
       {sql: `CREATE TABLE "${name}" (id INTEGER PRIMARY KEY AUTOINCREMENT) STRICT`})});
-    msg(`✓ created table ${name} (STRICT, with an autoincrement id); add fields with “＋ Add column”`, true);
+    msg(`✓ created table ${name} (STRICT, with an autoincrement id); add fields with “+ Add column”`, true);
     await loadTables(name);
     await loadRows();  // open the table just created
   } catch(e){ msg(friendly(e.message)); }

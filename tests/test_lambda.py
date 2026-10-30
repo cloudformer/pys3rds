@@ -31,6 +31,16 @@ def db(fake_s3, monkeypatch, bucket):
     return fake_s3
 
 
+def test_console_on_and_off(monkeypatch):
+    event = {"requestContext": {"http": {"method": "GET"}}, "rawPath": "/", "headers": {}}
+    monkeypatch.setattr(lf, "CONSOLE", True)
+    on = lf.lambda_handler(event, None)
+    assert on["statusCode"] == 200 and on["headers"]["content-type"].startswith("text/html")
+    monkeypatch.setattr(lf, "CONSOLE", False)
+    off = lf.lambda_handler(event, None)
+    assert off["statusCode"] == 404 and "console" in json.loads(off["body"])["error"]
+
+
 def test_bad_credentials(db):
     assert call("GET", "/api/databases", auth="Basic " + base64.b64encode(b"a:b").decode())[0] == 401
 
