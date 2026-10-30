@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "s3rds"
-version = "0.3.3"
+version = "0.3.4"
 description = "A truly serverless RDS on your own AWS account: Lambda URL endpoint, SQLite on S3, ≈ $0 when idle. Drivers named after the standard clients: s3rds.sqlite, s3rds.pymysql, s3rds.psycopg2; SQLAlchemy via sqlite+s3rds://, Django via ENGINE s3rds.sqlite."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -22,13 +22,14 @@ classifiers = [
   "Topic :: Database",
   "Topic :: Database :: Front-Ends",
 ]
-# one install for every driver. sqlglot: s3rds.pymysql's / s3rds.psycopg2's MySQL / PostgreSQL -> SQLite translation, imported only when a MySQL
-# statement is translated; pinned to the release the compatibility report was verified with (translations
-# change between releases). SQLAlchemy is not a dependency: the applications that use sqlite+s3rds:// have it.
-dependencies = ["sqlglot>=30.24,<31"]
+# no dependencies: s3rds.sqlite (and SQLAlchemy / Django on it) is the standard library only. The translating drivers
+# need sqlglot (MySQL / PostgreSQL -> SQLite), pinned to the series the compatibility report was verified with
+# (translations change between releases): pip install "s3rds[mysql]" / "s3rds[postgres]".
+dependencies = []
 
 [project.optional-dependencies]
-mysql = []  # kept so that pip install "s3rds[mysql]" from 0.1.x keeps working
+mysql = ["sqlglot>=30.24,<31"]       # s3rds.pymysql
+postgres = ["sqlglot>=30.24,<31"]    # s3rds.psycopg2
 server = ["sqlean.py==3.50.4.5"]      # the Lambda: s3rds.server + SQLite 3.50.4 instead of the runtime's 3.40.0
 sqlalchemy = ["SQLAlchemy>=2.0,<2.1"]   # the series the compatibility report verified; pip install "s3rds[sqlalchemy]"
 django = ["Django>=6.1,<6.2"]          # the same for Django (ENGINE "s3rds.sqlite"); Django 6.1 needs Python >= 3.12

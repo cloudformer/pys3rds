@@ -1,5 +1,7 @@
 """s3rds.psycopg2 — the PostgreSQL-dialect driver for s3rds. Write PostgreSQL; it runs on the s3rds endpoint (SQLite engine).
 
+    pip install "s3rds[postgres]"          # the extra brings sqlglot, the dialect translation
+
     from s3rds import psycopg2             # later: `import psycopg2` on a real RDS, nothing else changes
     from s3rds.psycopg2.extras import RealDictCursor
     conn = psycopg2.connect(host="xxx.lambda-url.us-east-2.on.aws", dbname="blog", user="admin", password="...")
@@ -26,8 +28,9 @@ try:
     import sqlglot
     from sqlglot import exp
     from sqlglot.errors import ParseError
-except ImportError:  # the error surfaces on first query, with install instructions
-    sqlglot = None
+except ImportError:
+    raise ImportError('s3rds.psycopg2 translates PostgreSQL with sqlglot, which is not installed: '
+                      'pip install "s3rds[postgres]"') from None
 
 __version__ = _sqlite.__version__
 apilevel = "2.0"
@@ -170,8 +173,6 @@ def _translate(sql):
         tables = [t.strip().strip('"') for t in m.group(1).split(",")]
         return tuple([f'DELETE FROM "{t}"' for t in tables]
                      + ([f"DELETE FROM sqlite_sequence WHERE name = '{t}'" for t in tables] if m.group(2) else []))
-    if sqlglot is None:
-        raise NotSupportedError("the PostgreSQL dialect needs sqlglot (an s3rds dependency): pip install s3rds")
     try:
         tree = sqlglot.parse_one(sql, read="postgres")
     except ParseError as e:

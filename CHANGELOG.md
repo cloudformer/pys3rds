@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.3.4
+
+Security fixes and optional sqlglot. **Server redeploy needed** (1, 2, 7) and **`terraform apply`** (3, 4, 5); the Function URLs stay.
+
+1. **ATTACH / DETACH / VACUUM INTO refused (403)** on both endpoints. `mode=ro` only covered the main file:
+   `ATTACH '/tmp/<sha1>.sqlite'` opened another database's cache read/write, so a request could change it (the
+   read-only endpoint then served the changed data; on the read/write endpoint the next normal write to that
+   database uploaded it), and `VACUUM INTO` could write files into `/tmp`. One authorizer now guards every
+   connection (`read()`, which had none, `run()`, `trial()`). Plain `VACUUM` is refused with them; it never ran
+   (SQLite does not VACUUM inside the transaction every request opens).
+2. **No credentials = refuse.** `DB_USER` or `DB_PASSWORD` empty used to mean no auth at all; now every API
+   request gets 503 `server has no credentials configured`. `ALLOW_NO_AUTH=1` (local experiments only) answers
+   without auth and adds `x-s3rds-warning: no-auth` to every response.
+3. **One IAM role per endpoint**: `<project>-rw-lambda-role` (GetObject + PutObject) and `<project>-ro-lambda-role`
+   (GetObject only), each may write only its own log group. The old shared `<project>-lambda-role` is replaced;
+   no `moved` blocks (the 0.3.3 ones are removed too).
+4. **New keys**: `db_ro` (true = also deploy the read-only endpoint; `db_ro_url` is null otherwise) and
+   `force_destroy` (default true as before: one `destroy` removes everything, data included; false: `destroy`
+   stops at a non-empty bucket and the databases survive).
+5. `console_auth_password` must be at least 16 characters (`terraform plan` refuses shorter).
+6. The `server_package` key is gone: this repo's Terraform always deploys its own working tree (`./client[server]`).
+   Remove the key from your var file.
+7. **sqlglot is optional.** `pip install s3rds` has no dependencies now: `s3rds.sqlite`, SQLAlchemy, Django and the
+   server are the standard library. The translating drivers take an extra: `pip install "s3rds[mysql]"` for
+   `s3rds.pymysql`, `"s3rds[postgres]"` for `s3rds.psycopg2`; without it their import raises `ImportError` naming the
+   extra (it used to fail at the first query). `s3rds.pymysql` / `s3rds.psycopg2` load on first use, not with
+   `import s3rds`. The Lambda zip drops sqlglot (~0.8 MB). **Upgrading pymysql / psycopg2 users: add the extra.**
+8. CI runs a Python × Django matrix: 3.9 and 3.10 with Django 4.2, 3.11 and 3.12 with 5.2, 3.12 and 3.13 with 6.1.
+   The `django` extra and the classifiers widen only to what passes there.
+
 ## 0.3.3
 
 Hardening. Server redeploy (the console switch); the Terraform changes keep both Function URLs.

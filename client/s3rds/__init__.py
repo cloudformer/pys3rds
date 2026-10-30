@@ -14,9 +14,16 @@ uses SQLAlchemy's SQLite dialect with s3rds.sqlite as its driver; on RDS the URL
 Django needs no import either: DATABASES ENGINE "s3rds.sqlite" (s3rds/sqlite/base.py) is Django's SQLite
 backend on s3rds.sqlite; on RDS the ENGINE becomes django.db.backends.mysql.
 """
-from . import sqlite  # noqa: F401
-from . import pymysql  # noqa: F401  (sqlglot is only needed when a MySQL statement is actually translated)
-from . import psycopg2  # noqa: F401
+from . import sqlite  # noqa: F401  (standard library only)
 
 __all__ = ["sqlite", "pymysql", "psycopg2"]
 __version__ = sqlite.__version__
+
+
+def __getattr__(name):
+    """s3rds.pymysql / s3rds.psycopg2 load on first use: they translate with sqlglot (extras "mysql" / "postgres"),
+    which s3rds.sqlite, SQLAlchemy, Django and the server (s3rds.server) never need."""
+    if name in ("pymysql", "psycopg2"):
+        import importlib
+        return importlib.import_module(f".{name}", __name__)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,6 +1,6 @@
 """s3rds.pymysql — the MySQL-dialect driver for s3rds. Write MySQL; it runs on the s3rds endpoint (SQLite engine).
 
-    pip install s3rds                      # sqlglot (the dialect translation) comes with it
+    pip install "s3rds[mysql]"             # the extra brings sqlglot, the dialect translation
 
     from s3rds import pymysql              # later: `import pymysql` on a real RDS, nothing else changes
     conn = pymysql.connect(host="xxx.lambda-url.us-east-2.on.aws",
@@ -42,8 +42,9 @@ try:
     import sqlglot
     from sqlglot import exp
     from sqlglot.errors import ParseError
-except ImportError:  # the error surfaces on first query, with install instructions
-    sqlglot = None
+except ImportError:
+    raise ImportError('s3rds.pymysql translates MySQL with sqlglot, which is not installed: '
+                      'pip install "s3rds[mysql]"') from None
 
 __version__ = _sqlite.__version__
 apilevel = "2.0"
@@ -557,8 +558,6 @@ def _fix_delete_join(tree):
 def _translate_stmts(sql):
     """MySQL statement -> tuple of SQLite statements (usually one; CREATE TABLE with inline indexes and
     RENAME TABLE give several, a type-only ALTER gives none)."""
-    if sqlglot is None:
-        raise NotSupportedError(0, "the MySQL dialect needs sqlglot (an s3rds dependency): pip install s3rds")
     m = _RENAME_TABLE.match(sql)
     if m:
         pairs = _RENAME_PAIR.findall(m.group(1))

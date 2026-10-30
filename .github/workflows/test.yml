@@ -1,13 +1,27 @@
 name: tests
 # Every push. The logic lives in cloudformer/redefine-aws-serverless-workflow; change it there once.
+# The matrix is the compatibility claim: a Python or Django version goes into client/pyproject.toml (classifiers,
+# the "django" extra) and the README only after its job here passes. Each Django series runs on the Pythons it supports.
 on:
   push:
     branches: [main]
   pull_request:
 jobs:
   test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { python: "3.9",  django: "4.2" }
+          - { python: "3.10", django: "4.2" }
+          - { python: "3.11", django: "5.2" }
+          - { python: "3.12", django: "5.2" }
+          - { python: "3.12", django: "6.1" }
+          - { python: "3.13", django: "6.1" }
     uses: cloudformer/redefine-aws-serverless-workflow/.github/workflows/reusable-test.yml@main
     with:
-      install: "pytest boto3 pymysql psycopg2-binary==2.9.12 sqlglot==30.24.0 sqlalchemy==2.0.55 django==6.1.2 sqlean.py==3.50.4.5"
+      python-version: ${{ matrix.python }}
+      install: "pytest boto3 pymysql psycopg2-binary==2.9.12 sqlglot==30.24.0 sqlalchemy==2.0.55 django~=${{ matrix.django }}.0 sqlean.py==3.50.4.5"
       compose-service: "mysql postgres"
       test-env: "MYSQL_DSN=mysql://root:test@127.0.0.1:3306/compat PG_DSN=postgresql://postgres:test@127.0.0.1:5433/compat"
+      report-name: compat-report-py${{ matrix.python }}-django${{ matrix.django }}

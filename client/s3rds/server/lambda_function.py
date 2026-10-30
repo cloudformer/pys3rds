@@ -17,7 +17,9 @@ applied before BEGIN on every request (the server keeps no session).
 Read / write is decided by the endpoint, never by guessing the SQL:
   write endpoint (default)   /query goes through run(): SQLite decides whether data changed, only then S3 is written
   read-only endpoint READONLY=1   everything opens mode=ro; a write is refused by SQLite -> 403
-Auth: HTTP Basic, the same meaning as RDS user / password.
+Auth: HTTP Basic, the same meaning as RDS user / password. No DB_USER / DB_PASSWORD -> every request 503, unless
+ALLOW_NO_AUTH=1 (local experiments only), which answers without auth and says so in x-s3rds-warning: no-auth.
+ATTACH / DETACH / VACUUM INTO -> 403: a request works on its own database file only.
 Every JSON reply carries ms (server time); data calls also carry s3 (cache-hit / download / +upload).
 """
 import base64
@@ -27,13 +29,14 @@ import os
 import re
 import time
 
-from .s3_sqlite import (SESSION_PRAGMAS, DatabaseExists, DatabaseNotFound, SqliteS3, WriteConflict,
+from .s3_sqlite import (SESSION_PRAGMAS, DatabaseExists, DatabaseNotFound, NotAllowed, SqliteS3, WriteConflict,
                        create_database, list_databases, sqlite3)
 
 BUCKET = os.environ["DB_BUCKET"]
 PREFIX = os.environ.get("DB_PREFIX", "")
 DB_USER = os.environ.get("DB_USER", "")
 DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
+ALLOW_NO_AUTH = os.environ.get("ALLOW_NO_AUTH") == "1"  # no credentials configured: refuse (503) unless this is set
 READONLY = os.environ.get("READONLY") == "1"
 CONSOLE = os.environ.get("CONSOLE", "1") == "1"  # the web console at GET /; unset = on
 
@@ -118,11 +121,15 @@ def _int(qs, key, default, lo, hi):
     return max(lo, min(value, hi))
 
 
+def _no_credentials():
+    return not DB_USER or not DB_PASSWORD
+
+
 def _authed(event):
-    """HTTP Basic, constant-time compare. No DB_USER configured = no auth (do not do that)."""
-    if not DB_USER:
-        return True
-    auth = (event.get("headers") or {}).get("authorization", "")
+    """HTTP Basic, constant-time compare. The handler answers 503 before this when no credentials are configured."""
+    if _no_credentials():
+        return ALLOW_NO_AUTH
+    auth =(event.get("headers") or {}).get("authorization", "")
     if not auth.lower().startswith("basic "):
         return False
     try:
@@ -388,6 +395,8 @@ def lambda_handler(event, context):
             "body": INDEX_HTML,
         }
 
+    if _no_credentials() and not ALLOW_NO_AUTH:
+        return _json(503, {"error": "server has no credentials configured (DB_USER / DB_PASSWORD)"})
     if not _authed(event):
         return _json(401, {"error": "bad credentials"})
 
@@ -402,7 +411,7 @@ def lambda_handler(event, context):
                 break
     except BadRequest as e:
         status, data = 400, {"error": str(e)}
-    except Forbidden as e:
+    except (Forbidden, NotAllowed) as e:
         status, data = 403, {"error": str(e)}
     except DatabaseNotFound as e:
         status, data = 404, {"error": f"database not found: {e}"}
@@ -419,4 +428,7 @@ def lambda_handler(event, context):
         status, data = 500, {"error": f"{type(e).__name__}: {e}"}
 
     data.setdefault("ms", round((time.perf_counter() - t0) * 1000, 1))
-    return _json(status, data)
+    resp = _json(status, data)
+    if _no_credentials():  # here only with ALLOW_NO_AUTH=1
+        resp["headers"]["x-s3rds-warning"] = "no-auth"
+    return resp

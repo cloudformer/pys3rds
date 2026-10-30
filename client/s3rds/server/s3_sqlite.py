@@ -4,6 +4,7 @@ read(fn):  opens the local cache mode=ro, SQLite itself refuses writes; never up
 run(fn):   after fn, SQLite's authorizer says whether data really changed; only then the whole file
            goes back with If-Match (CAS); on 412 re-download, replay, retry; out of retries -> WriteConflict.
            Rule: failing is allowed, duplicating a write or overwriting someone else's is not.
+Every connection: ATTACH / DETACH (and so VACUUM INTO) refused -> NotAllowed; one request touches one file.
 Cache:     /tmp keyed by ETag; downloads go through a temp file + os.replace, never a half file.
 One key = one database; the lock is the file, so different databases never conflict.
 
@@ -62,6 +63,45 @@ class DatabaseExists(Exception):
 
 class WriteConflict(Exception):
     pass
+
+
+class NotAllowed(Exception):
+    """A statement the authorizer refused: it would reach past this request's one database file."""
+
+
+# ATTACH opens another file read/write even on a mode=ro connection: another database's /tmp cache (its path is
+# sha1(bucket/key), so it can be guessed) could be changed and later uploaded. VACUUM INTO attaches too, so it is
+# refused with it and cannot write files into /tmp either. Plain VACUUM attaches a temporary database as well and is
+# refused the same way. On the read/write path SQLite stops any VACUUM before the authorizer is even asked (every
+# request runs inside a transaction: "cannot VACUUM from within a transaction"); that error is reported as the same
+# refusal, so both endpoints answer alike.
+_DENIED_ACTIONS = {sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH}
+_VACUUM_IN_TX = "cannot VACUUM from within a transaction"  # SQLite's own message
+NOT_ALLOWED = "ATTACH / DETACH / VACUUM INTO are not allowed: a request works on its own database only"
+
+
+class _Authorizer:
+    """SQLite's authorizer for every connection: ATTACH / DETACH denied; on_allowed(action, arg1, arg2) sees the rest.
+    SQLite reports a denial as a plain DatabaseError ("not authorized"); denied says it was ours -> NotAllowed."""
+
+    def __init__(self, on_allowed=None):
+        self.on_allowed = on_allowed
+        self.denied = False
+
+    def __call__(self, action, arg1, arg2, _dbname, _source):  # signature fixed by sqlite3
+        if action in _DENIED_ACTIONS:
+            self.denied = True
+            return sqlite3.SQLITE_DENY
+        if self.on_allowed:
+            self.on_allowed(action, arg1, arg2)
+        return sqlite3.SQLITE_OK
+
+    def translate(self, e):
+        """The exception to raise for e: NotAllowed when the authorizer refused (or SQLite refused a VACUUM inside
+        the request's transaction), else e itself."""
+        if isinstance(e, sqlite3.DatabaseError) and (self.denied or _VACUUM_IN_TX in str(e)):
+            return NotAllowed(NOT_ALLOWED)
+        return e
 
 
 def _local_path(bucket, key):
@@ -208,9 +248,16 @@ class SqliteS3:
         self._ensure_fresh()
         conn = sqlite3.connect(f"file:{self.local}?mode=ro", uri=True, detect_types=detect_types)
         conn.row_factory = sqlite3.Row
+        auth = _Authorizer()
         try:
             _apply_pragmas(conn, pragmas)
+            conn.set_authorizer(auth)
             return fn(conn)
+        except sqlite3.DatabaseError as e:
+            err = auth.translate(e)
+            if err is e:
+                raise
+            raise err from None
         finally:
             conn.close()
 
@@ -276,7 +323,7 @@ class SqliteS3:
         """
         dirty = False
 
-        def authorizer(action, arg1, arg2, _dbname, _source):  # signature fixed by sqlite3
+        def note_write(action, arg1, arg2):
             nonlocal dirty
             if action == sqlite3.SQLITE_PRAGMA:
                 # only PRAGMA x = v is a write; the file fingerprint still catches anything that changed the file
@@ -284,7 +331,8 @@ class SqliteS3:
                     dirty = True
             elif action not in _READ_ACTIONS:
                 dirty = True
-            return sqlite3.SQLITE_OK
+
+        authorizer = _Authorizer(note_write)
 
         # isolation_level=None: no implicit transactions from the sqlite3 module; we BEGIN/COMMIT ourselves
         conn = sqlite3.connect(self.local, isolation_level=None, detect_types=detect_types)
@@ -303,13 +351,16 @@ class SqliteS3:
                     raise sqlite3.OperationalError("COMMIT / END inside a transaction trial; use the commit request")
                 if conn.in_transaction:  # fn may have committed itself
                     conn.execute("COMMIT" if commit else "ROLLBACK")
-            except BaseException:
+            except BaseException as e:
                 try:
                     if conn.in_transaction:
                         conn.execute("ROLLBACK")
                 except sqlite3.Error:
                     self._invalidate()  # even ROLLBACK failed: the local state cannot be trusted
-                raise
+                err = authorizer.translate(e)
+                if err is e:
+                    raise
+                raise err from None
         finally:
             conn.close()
         return result, dirty
