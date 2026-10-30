@@ -8,7 +8,7 @@ Whole test run: **252 passed**, 0 failed, 9 expected failures (known gaps), 1 sk
 
 Open tasks: task 22 (1), task 28 (1), task 29 (3) — see [TASKS.md](TASKS.md).
 
-## s3rds.pymysql (lambda_handler in-process) vs MySQL — reference: MySQL 8.0.46 (Docker)
+## s3rds.pymysql (deployed Lambda https://fv6zi4zg3qnt6q4n2yitsq3lza0refke.lambda-url.us-east-2.on.aws/) vs MySQL — reference: MySQL 8.0.46 (Docker)
 
 **Support 90%** (90 / 99 features) · 1 gap · 5 quirk · 8 unsupported · 85 verified
 
@@ -125,7 +125,7 @@ Open tasks: task 22 (1), task 28 (1), task 29 (3) — see [TASKS.md](TASKS.md).
 | SELECT ... FOR UPDATE | ⛔ | row locks need a real server |
 | SET @x := 1 user variables | ⛔ | no session state between requests |
 
-## s3rds.psycopg2 (lambda_handler in-process) vs PostgreSQL — reference: PostgreSQL 16.4 (Debian 16.4-1.pgdg120+2) (Docker)
+## s3rds.psycopg2 (deployed Lambda https://fv6zi4zg3qnt6q4n2yitsq3lza0refke.lambda-url.us-east-2.on.aws/) vs PostgreSQL — reference: PostgreSQL 16.4 (Debian 16.4-1.pgdg120+2) (Docker)
 
 **Support 57%** (11 / 19 features) · 4 gap · 4 unsupported · 11 verified
 
