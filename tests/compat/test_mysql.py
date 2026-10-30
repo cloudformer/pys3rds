@@ -12,8 +12,8 @@ The report is written to tests/compat/REPORT.md.
 """
 import pytest
 
-# The production engine is the pinned one (src/db/requirements.txt), the same module this suite runs
-from s3_sqlite import sqlite3 as ENGINE  # noqa: E402
+# The production engine is the pinned one (extra "server"), the same module this suite runs
+from s3rds.server.s3_sqlite import sqlite3 as ENGINE  # noqa: E402
 
 LAMBDA_SQLITE = ENGINE.sqlite_version_info
 LAMBDA_UPDATE_DELETE_LIMIT = bool(ENGINE.connect(":memory:").execute(

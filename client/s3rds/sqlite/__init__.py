@@ -49,12 +49,12 @@ import socket
 import urllib.parse
 import warnings
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 apilevel = "2.0"
 threadsafety = 1
 paramstyle = "format"  # %s like pymysql; ? is accepted too
-# the engine behind the endpoint: the server ships its own SQLite (src/db/requirements.txt, sqlean.py);
+# the engine behind the endpoint: the server ships its own SQLite (extra "server": sqlean.py);
 # SQLAlchemy and Django read it to decide what SQL they may use (RETURNING needs 3.35)
 sqlite_version = "3.50.4"
 sqlite_version_info = (3, 50, 4)

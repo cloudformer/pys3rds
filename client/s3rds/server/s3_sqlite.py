@@ -14,11 +14,11 @@ import os
 import shutil
 
 try:
-    import sqlean as sqlite3   # the pinned engine (src/db/requirements.txt), bundled into the Lambda zip
+    import sqlean as sqlite3   # the pinned engine (extra "server" in client/pyproject.toml), bundled into the Lambda zip
 except ImportError:            # from source without it: the local regression tests only
     import sqlite3
 if os.environ.get("AWS_LAMBDA_FUNCTION_NAME") and sqlite3.__name__ != "sqlean":
-    raise RuntimeError("the zip lacks the pinned SQLite engine: build it with python3 scripts/build_server.py")
+    raise RuntimeError('the zip lacks the pinned SQLite engine: install "s3rds[server]" into it')
 
 import boto3
 from botocore.exceptions import ClientError

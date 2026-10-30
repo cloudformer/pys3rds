@@ -11,7 +11,7 @@ import pytest
 
 sqlglot = pytest.importorskip("sqlglot")
 
-import lambda_function as lf  # noqa: E402
+from s3rds.server import lambda_function as lf  # noqa: E402
 import s3rds  # noqa: E402
 from s3rds import pymysql as s3mysql  # noqa: E402
 from s3rds.pymysql import (IntegrityError, NotSupportedError, OperationalError,  # noqa: E402

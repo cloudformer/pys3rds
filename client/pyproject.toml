@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "s3rds"
-version = "0.3.0"
+version = "0.3.1"
 description = "A truly serverless RDS on your own AWS account: Lambda URL endpoint, SQLite on S3, ≈ $0 when idle. Drivers named after the standard clients: s3rds.sqlite, s3rds.pymysql, s3rds.psycopg2; SQLAlchemy via sqlite+s3rds://, Django via ENGINE s3rds.sqlite."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -29,6 +29,7 @@ dependencies = ["sqlglot>=30.24,<31"]
 
 [project.optional-dependencies]
 mysql = []  # kept so that pip install "s3rds[mysql]" from 0.1.x keeps working
+server = ["sqlean.py==3.50.4.5"]      # the Lambda: s3rds.server + SQLite 3.50.4 instead of the runtime's 3.40.0
 sqlalchemy = ["SQLAlchemy>=2.0,<2.1"]   # the series the compatibility report verified; pip install "s3rds[sqlalchemy]"
 django = ["Django>=6.1,<6.2"]          # the same for Django (ENGINE "s3rds.sqlite"); Django 6.1 needs Python >= 3.12
 
@@ -44,14 +45,17 @@ Changelog = "https://github.com/cloudformer/s3rds/blob/main/CHANGELOG.md"
 Issues = "https://github.com/cloudformer/s3rds/issues"
 
 [tool.setuptools]
-packages = ["s3rds", "s3rds.sqlite", "s3rds.psycopg2"]
+packages = ["s3rds", "s3rds.sqlite", "s3rds.psycopg2", "s3rds.server"]
+
+[tool.setuptools.package-data]
+"s3rds.server" = ["index.html"]
 
 # The versions tests/compat/REPORT.md was verified with; README.md, README.zh.md and client/README.md state the same.
 [tool.s3rds.verified]
 python = ["3.9.6", "3.13.7"]       # the client: regression suite on 3.9.6, the full comparison on 3.13.7
 lambda_runtime = "python3.12"      # the server (terraform/main.tf)
 sqlite = "3.50.4"                  # the server's engine, shipped in the Lambda zip (the runtime's own is 3.40.0)
-sqlean = "3.50.4.5"                # sqlean.py, which carries it (src/db/requirements.txt)
+sqlean = "3.50.4.5"                # sqlean.py, which carries it (extra "server")
 sqlglot = "30.24.0"
 sqlalchemy = "2.0.55"
 django = "6.1.2"

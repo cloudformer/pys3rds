@@ -4,7 +4,7 @@ Description: >-
   SQLite on S3, ~$0 when idle. Same resources as terraform/main.tf.
 
 # Deploy (AWS CLI only, no other tools):
-#   python3 scripts/build_server.py      # src/db + the pinned SQLite engine -> terraform/.build/db
+#   python3 scripts/build_server.py "s3rds[server]==0.3.1"   # the server + the pinned SQLite engine -> terraform/.build/db
 #   aws cloudformation package --template-file cloudformation/template.yaml \
 #       --s3-bucket <any-bucket-you-own> --output-template-file /tmp/s3rds.yaml
 #   aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
@@ -84,9 +84,9 @@ Resources:
     Properties:
       FunctionName: !Sub "${Env}-srds-db-lambda"
       Runtime: python3.12
-      Handler: lambda_function.lambda_handler
+      Handler: s3rds.server.lambda_function.lambda_handler
       Role: !GetAtt LambdaRole.Arn
-      Code: ../terraform/.build/db   # python3 scripts/build_server.py first
+      Code: ../terraform/.build/db   # scripts/build_server.py first
       Timeout: 15
       MemorySize: 256
       ReservedConcurrentExecutions: 1   # single writer; CAS in code is the second guard
@@ -132,9 +132,9 @@ Resources:
     Properties:
       FunctionName: !Sub "${Env}-srds-db-ro-lambda"
       Runtime: python3.12
-      Handler: lambda_function.lambda_handler
+      Handler: s3rds.server.lambda_function.lambda_handler
       Role: !GetAtt LambdaRole.Arn
-      Code: ../terraform/.build/db   # python3 scripts/build_server.py first
+      Code: ../terraform/.build/db   # scripts/build_server.py first
       Timeout: 15
       MemorySize: 256
       Environment:

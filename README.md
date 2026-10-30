@@ -89,7 +89,7 @@ terraform -chdir=terraform destroy -var-file=my.json   # tear everything down (t
 
 ```bash
 cp cloudformation/example-params.json cloudformation/params.json   # set passwords
-python3 scripts/build_server.py                                  # src/db + the pinned SQLite engine
+python3 scripts/build_server.py "s3rds[server]==0.3.1"          # the server + the pinned SQLite engine
 aws cloudformation package --template-file cloudformation/template.yaml \
     --s3-bucket <any-bucket-you-own> --output-template-file /tmp/s3rds.yaml
 aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
@@ -210,7 +210,7 @@ What the report was verified with; `client/pyproject.toml` (`[tool.s3rds.verifie
 |---|---|---|
 | Python (client) | 3.9 – 3.13: regression suite on 3.9.6, full comparison on 3.13.7 | `requires-python = ">=3.9"` |
 | Server runtime | AWS Lambda `python3.12` | `terraform/main.tf` |
-| SQLite (server engine) | 3.50.4, shipped in the Lambda zip (the runtime's own is 3.40.0) | `src/db/requirements.txt`: `sqlean.py==3.50.4.5` |
+| SQLite (server engine) | 3.50.4, shipped in the Lambda zip (the runtime's own is 3.40.0) | extra `pip install "s3rds[server]"` = `sqlean.py==3.50.4.5` |
 | sqlglot (MySQL translation) | 30.24 | dependency `sqlglot>=30.24,<31` |
 | SQLAlchemy | 2.0, tested on 2.0.55 | extra `pip install "s3rds[sqlalchemy]"` = `SQLAlchemy>=2.0,<2.1` |
 | Django | 6.1, tested on 6.1.2 (Python ≥ 3.12) | extra `pip install "s3rds[django]"` = `Django>=6.1,<6.2` |
@@ -339,8 +339,8 @@ Write throughput is a few per second. Good for personal apps, internal tools, bl
 ## Repository layout
 
 ```
-src/db/           the database: lambda_function.py (HTTP API), s3_sqlite.py (engine), index.html (console)
 client/           the pip package s3rds: s3rds/sqlite/ (driver; base.py = the Django backend), s3rds/pymysql.py, s3rds/psycopg2/, pyproject.toml
+                  s3rds/server/: the database Lambda (pip install "s3rds[server]"): lambda_function.py (HTTP API), s3_sqlite.py (engine), index.html (console)
 terraform/        deployment, option A
 cloudformation/   deployment, option B
 tests/            correctness guarantees

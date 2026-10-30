@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.1
+
+The server is in the pip package. Same server code; redeploy to switch the Lambdas to the packaged handler.
+
+- **`s3rds.server`**: the database Lambda (`lambda_function.py`, `s3_sqlite.py`, `index.html`, formerly `src/db/`).
+  `pip install "s3rds[server]"` adds the pinned engine (`sqlean.py==3.50.4.5`, formerly `src/db/requirements.txt`);
+  the Lambda handler is `s3rds.server.lambda_function.lambda_handler`. A client (`pip install s3rds`) is unchanged
+  and never imports it.
+- Terraform: new key `server_package`, what `scripts/build_server.py` installs into the zip: a release
+  (`"s3rds[server]==0.3.1"`) or the working tree (`"./client[server]"`, before a release). CloudFormation: pass
+  the same to `scripts/build_server.py`.
+
 ## 0.3.0 — 2026-10-29
 
 PostgreSQL dialect. No server redeploy needed.

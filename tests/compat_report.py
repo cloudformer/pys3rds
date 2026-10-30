@@ -104,7 +104,7 @@ def _counts(kind):
 
 def render():
     import compat_aws
-    from s3_sqlite import sqlite3
+    from s3rds.server.s3_sqlite import sqlite3
     engine = f"SQLite {sqlite3.sqlite_version} ({'sqlean.py ' + __import__('importlib.metadata').metadata.version('sqlean.py') if sqlite3.__name__ == 'sqlean' else 'standard library'})"
     import s3rds
     try:

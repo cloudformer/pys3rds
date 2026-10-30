@@ -27,7 +27,7 @@ import os
 import re
 import time
 
-from s3_sqlite import (SESSION_PRAGMAS, DatabaseExists, DatabaseNotFound, SqliteS3, WriteConflict,
+from .s3_sqlite import (SESSION_PRAGMAS, DatabaseExists, DatabaseNotFound, SqliteS3, WriteConflict,
                        create_database, list_databases, sqlite3)
 
 BUCKET = os.environ["DB_BUCKET"]

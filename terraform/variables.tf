@@ -69,3 +69,9 @@ variable "console_auth_password" {
   type        = string
   sensitive   = true
 }
+
+# ---- s3rds ----
+variable "server_package" {
+  description = "What the db lambdas run, as pip installs it: a release (\"s3rds[server]==0.3.1\") or this working tree (\"./client[server]\", relative to the repo root; before a release)"
+  type        = string
+}

@@ -59,10 +59,10 @@ resource "aws_iam_role_policy" "lambda" {
   })
 }
 
-# ---------------- packaging: src/db + its pinned engine (src/db/requirements.txt, Linux wheels) ----------------
-# scripts/build_server.py stages terraform/.build/db at plan time (pip downloads the wheels once)
+# ---------------- packaging: the pip package s3rds[server] (s3rds.server + the pinned engine, Linux wheels) ----------------
+# scripts/build_server.py stages terraform/.build/db at plan time
 data "external" "db_build" {
-  program = ["python3", "${path.module}/../scripts/build_server.py"]
+  program = ["python3", "${path.module}/../scripts/build_server.py", var.server_package]
 }
 
 data "archive_file" "db_code" {
@@ -76,7 +76,7 @@ resource "aws_lambda_function" "db" {
   function_name    = "${var.project_name}-db-lambda"
   role             = aws_iam_role.lambda.arn
   runtime          = "python3.12"
-  handler          = "lambda_function.lambda_handler"
+  handler          = "s3rds.server.lambda_function.lambda_handler"
   filename         = data.archive_file.db_code.output_path
   source_code_hash = data.archive_file.db_code.output_base64sha256
   timeout          = 15
@@ -103,7 +103,7 @@ resource "aws_lambda_function" "db_ro" {
   function_name    = "${var.project_name}-db-ro-lambda"
   role             = aws_iam_role.lambda.arn
   runtime          = "python3.12"
-  handler          = "lambda_function.lambda_handler"
+  handler          = "s3rds.server.lambda_function.lambda_handler"
   filename         = data.archive_file.db_code.output_path
   source_code_hash = data.archive_file.db_code.output_base64sha256
   timeout          = 15

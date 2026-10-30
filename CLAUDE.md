@@ -91,14 +91,17 @@ s3rds (github.com/cloudformer/s3rds) is the reference implementation; when in do
   reference service: add it there.
 - The package name is read from `client/pyproject.toml` by `tests/conftest.py` (`PACKAGE`); nothing else
   hard-codes it.
-- Release: bump `version` in `client/pyproject.toml` and `__version__` in `client/<package>/__init__.py`,
-  CHANGELOG entry, commit, `git tag vX.Y.Z && git push --tags`. Once per package Frank adds the PyPI
+- Release: test first (real var file keeps `"server_package": "./client[server]"`, the working tree: pytest,
+  apply, the `--aws` comparison), then bump `version` in `client/pyproject.toml`, `__version__` in
+  `client/<package>/__init__.py` and `server_package` in `terraform/example.json` (`"<package>[server]==X.Y.Z"`),
+  CHANGELOG entry, one commit, `git tag vX.Y.Z && git push --tags`. Once per package Frank adds the PyPI
   trusted publisher (owner cloudformer, this repo, `publish.yml`, environment `pypi`).
 
 ## Layout (do not move things)
 
 ```
-src/server/       lambda_function.py (shared helpers on top, routes below), index.html (console)
+client/<project>/server/  the Lambda: lambda_function.py (shared helpers on top, routes below), index.html (console);
+                  pip install "<project>[server]", handler <project>.server.lambda_function.lambda_handler
 client/<project>/ the pip package; pyproject.toml; README.md is the PyPI page
 terraform/ cloudformation/
 tests/            regression; tests/compat/ compatibility (conftest = harness, test_<ref>.py = feature list,

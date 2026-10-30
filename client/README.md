@@ -113,7 +113,7 @@ What the report was verified with; the full report: [REPORT.md](https://github.c
 |---|---|---|
 | Python (client) | 3.9 – 3.13: regression suite on 3.9.6, full comparison on 3.13.7 | `requires-python = ">=3.9"` |
 | Server runtime | AWS Lambda `python3.12` | `terraform/main.tf` |
-| SQLite (server engine) | 3.50.4, shipped in the Lambda zip (the runtime's own is 3.40.0) | `src/db/requirements.txt`: `sqlean.py==3.50.4.5` |
+| SQLite (server engine) | 3.50.4, shipped in the Lambda zip (the runtime's own is 3.40.0) | extra `pip install "s3rds[server]"` = `sqlean.py==3.50.4.5` |
 | sqlglot (MySQL translation) | 30.24 | dependency `sqlglot>=30.24,<31` |
 | SQLAlchemy | 2.0, tested on 2.0.55 | extra `pip install "s3rds[sqlalchemy]"` = `SQLAlchemy>=2.0,<2.1` |
 | Django | 6.1, tested on 6.1.2 (Python ≥ 3.12) | extra `pip install "s3rds[django]"` = `Django>=6.1,<6.2` |

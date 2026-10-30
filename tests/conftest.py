@@ -1,4 +1,4 @@
-"""Test setup: src/ on the import path, an in-memory fake S3.
+"""Test setup: client/ on the import path, an in-memory fake S3.
 
 The fake S3 implements everything s3_sqlite uses: ETag (= MD5), HEAD 404,
 conditional PUT with If-Match / If-None-Match, and the list paginator.
@@ -12,7 +12,6 @@ import uuid
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "src", "db"))
 sys.path.insert(0, os.path.join(ROOT, "client"))
 
 # lambda_function reads these at import time
@@ -77,7 +76,7 @@ class FakeS3:
 
 @pytest.fixture
 def fake_s3(monkeypatch):
-    import s3_sqlite
+    from s3rds.server import s3_sqlite
     fake = FakeS3()
     monkeypatch.setattr(s3_sqlite, "s3", fake)
     s3_sqlite.SqliteS3._etags.clear()

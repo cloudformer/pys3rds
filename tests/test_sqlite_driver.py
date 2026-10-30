@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-import lambda_function as lf
+from s3rds.server import lambda_function as lf
 from s3rds import sqlite
 
 AUTH = "Basic " + base64.b64encode(b"admin:pw").decode()

@@ -10,19 +10,21 @@ lands they turn XPASS (strict) and the marker must be removed -- that is the com
 import base64
 import json
 import os
+import re
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import pytest
 
-import lambda_function as lf
-from s3_sqlite import sqlite3 as ENGINE   # the server's SQLite module: sqlean (pinned) on Lambda
+from s3rds.server import lambda_function as lf
+from s3rds.server.s3_sqlite import sqlite3 as ENGINE   # the server's SQLite module: sqlean (pinned) on Lambda
 import s3rds
 from s3rds import psycopg2 as s3pg
 from s3rds import pymysql as s3mysql
 from s3rds import sqlite as s3sqlite
 
-PIN = open(os.path.join(os.path.dirname(__file__), "..", "..", "src", "db", "requirements.txt")).read().split()[-1]
+# the server's engine pin: extra "server" in client/pyproject.toml
+PIN = re.search(r'^server = \["([^"]+)"', open(os.path.join(os.path.dirname(__file__), "..", "..", "client", "pyproject.toml")).read(), re.M).group(1)
 
 
 @pytest.fixture(autouse=True)

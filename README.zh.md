@@ -85,7 +85,7 @@ terraform -chdir=terraform destroy -var-file=my.json   # 全部拆掉（桶要�
 
 ```bash
 cp cloudformation/example-params.json cloudformation/params.json   # 改密码
-python3 scripts/build_server.py                                  # src/db 加上固定版本的 SQLite 引擎
+python3 scripts/build_server.py "s3rds[server]==0.3.1"          # 服务端加上固定版本的 SQLite 引擎
 aws cloudformation package --template-file cloudformation/template.yaml \
     --s3-bucket <你自己任意一个桶> --output-template-file /tmp/s3rds.yaml
 aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
@@ -200,7 +200,7 @@ python3 -m pytest tests -q --docker run --aws real-srds.json   # Docker 里的 M
 |---|---|---|
 | Python（客户端） | 3.9 – 3.13：3.9.6 跑回归测试，3.13.7 跑完整对比 | `requires-python = ">=3.9"` |
 | 服务端运行时 | AWS Lambda `python3.12` | `terraform/main.tf` |
-| SQLite（服务端引擎） | 3.50.4，随 Lambda 代码包一起部署（运行时自带的是 3.40.0） | `src/db/requirements.txt`：`sqlean.py==3.50.4.5` |
+| SQLite（服务端引擎） | 3.50.4，随 Lambda 代码包一起部署（运行时自带的是 3.40.0） | extra `pip install "s3rds[server]"` = `sqlean.py==3.50.4.5` |
 | sqlglot（MySQL 翻译） | 30.24 | 依赖 `sqlglot>=30.24,<31` |
 | SQLAlchemy | 2.0，实测 2.0.55 | 可选 `pip install "s3rds[sqlalchemy]"` = `SQLAlchemy>=2.0,<2.1` |
 | Django | 6.1，实测 6.1.2（Python ≥ 3.12） | 可选 `pip install "s3rds[django]"` = `Django>=6.1,<6.2` |
@@ -322,8 +322,8 @@ with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:   # 和 psycopg2 �
 ## 目录
 
 ```
-src/db/           数据库本体:lambda_function.py(HTTP API)、s3_sqlite.py(引擎)、index.html(控制台)
 client/           pip 包 s3rds:s3rds/sqlite/(驱动;base.py 是 Django 后端)、s3rds/pymysql.py、s3rds/psycopg2/、pyproject.toml
+                  s3rds/server/:数据库 Lambda(pip install "s3rds[server]"):lambda_function.py(HTTP API)、s3_sqlite.py(引擎)、index.html(控制台)
 terraform/        部署方式 A
 cloudformation/   部署方式 B
 tests/            正确性测试

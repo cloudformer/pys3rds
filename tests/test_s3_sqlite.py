@@ -4,8 +4,8 @@ import os
 import pytest
 from botocore.exceptions import ClientError
 
-import s3_sqlite
-from s3_sqlite import SqliteS3, WriteConflict, create_database, sqlite3   # the engine module the server uses
+from s3rds.server import s3_sqlite
+from s3rds.server.s3_sqlite import SqliteS3, WriteConflict, create_database, sqlite3   # the engine module the server uses
 
 KEY = "db/t.sqlite"
 SCHEMA = "CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT NOT NULL) STRICT"
