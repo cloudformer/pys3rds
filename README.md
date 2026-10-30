@@ -69,24 +69,31 @@ Large results are paged at 4 MB and fetched completely inside `execute()`; nothi
 
 ### Deploy steps
 ```bash
-cp terraform/example.json terraform/my.json        # set aws_profile, env, console_auth_password
+cp terraform/example.json terraform/my.json        # set aws_profile, env, console_auth_password (16+ characters)
 terraform -chdir=terraform init
 terraform -chdir=terraform apply -var-file=my.json
 terraform -chdir=terraform output                   # db_url, db_ro_url
 ```
 
-This creates one S3 bucket (`<env>-srds-db-2026`), two Lambdas (read/write, read-only) with Function URLs, their
-log groups and one scoped IAM role. `terraform -chdir=terraform destroy -var-file=my.json` removes everything,
-databases included.
+This creates one S3 bucket (`<env>-srds-db-2026`), the read/write Lambda and, with `"db_ro": true`, the read-only
+Lambda, each with a Function URL, its own log group and its own IAM role. `terraform -chdir=terraform destroy
+-var-file=my.json` removes everything, databases included (`"force_destroy": true`, the default); set it to `false`
+and destroy stops at a non-empty bucket, so the databases survive.
 
 ### Security
 - **Public URL, password inside**: with `function_url_auth = "NONE"` the Function URLs are public, so their resource
   policy says `principal = "*"` — AWS requires that for a public URL, and it only lets a request *reach* the Lambda.
   Every request must then pass HTTP Basic (`console_auth_username` / `console_auth_password`) or gets 401.
   `function_url_auth = "AWS_IAM"` makes AWS check a SigV4 signature first (the browser console cannot sign, so it is unusable then).
+- **No credentials, no access**: a server without a user and password answers every API request with 503; it
+  never falls back to no auth. The password must be at least 16 characters.
+- **One request, one database**: `ATTACH`, `DETACH` and `VACUUM INTO` are refused (403), so SQL sent to one database
+  cannot open another database's file or write files on the Lambda.
 - **No CORS**: the console is served by the same URL and the drivers are not browsers.
 - **S3**: private bucket (public access blocked), SSE-S3 encryption, a bucket policy that denies any request not over TLS.
-- **IAM**: the Lambdas may read / write `db/*.sqlite`, list `db/` and write their own two log groups — nothing else.
+- **IAM, one role per endpoint**: the read/write role may read and write `db/*.sqlite`; the read-only role may only
+  read it, so the read-only endpoint cannot write to S3 even through a bug. Both may list `db/` and write their own
+  log group — nothing else.
 - **Logs**: one log group per Lambda, kept 14 days.
 - **Console off**: `"console": false` leaves the API only (`GET /` returns 404).
 
@@ -179,8 +186,9 @@ The generated result: **[tests/compat/REPORT.md](tests/compat/REPORT.md)**.
 ```
 
 Layout: `client/` the pip package (drivers + `s3rds/server/`, the Lambda) · `terraform/` · `tests/`.
-Release: test, bump the version (`client/pyproject.toml`, `__version__`, `server_package` in
-`terraform/example.json`), CHANGELOG, commit, `git tag vX.Y.Z && git push --tags`.
+Terraform deploys the server from this working tree (`./client[server]`), so `apply` runs what you test.
+Release: test, bump the version (`client/pyproject.toml`, `__version__`), CHANGELOG, commit,
+`git tag vX.Y.Z && git push --tags`.
 Open work: [tests/compat/TASKS.md](tests/compat/TASKS.md).
 
 ## The Redefine Serverless series

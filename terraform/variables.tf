@@ -30,7 +30,7 @@ variable "env" {
 }
 
 variable "project_name" {
-  description = "Project name; resources are <project_name>-db-lambda, <project_name>-lambda-role"
+  description = "Project name; resources are <project_name>-db-lambda, <project_name>-db-ro-lambda, <project_name>-rw-lambda-role, <project_name>-ro-lambda-role"
   type        = string
   default     = "srds"
 }
@@ -65,13 +65,25 @@ variable "console_auth_username" {
 }
 
 variable "console_auth_password" {
-  description = "Database password (HTTP Basic): console login AND the password= clients connect() with. \"\" disables auth on the db lambda (public!)."
+  description = "Database password (HTTP Basic): console login AND the password= clients connect() with. At least 16 characters."
   type        = string
   sensitive   = true
+
+  validation {
+    condition     = length(var.console_auth_password) >= 16
+    error_message = "console_auth_password must be at least 16 characters (the endpoint is a public URL)."
+  }
 }
 
-# ---- s3rds ----
-variable "server_package" {
-  description = "What the db lambdas run, as pip installs it: a release (\"s3rds[server]==0.3.1\") or this working tree (\"./client[server]\", relative to the repo root; before a release)"
-  type        = string
+variable "db_ro" {
+  description = "Also deploy the read-only endpoint (<project_name>-db-ro-lambda): its own role, GetObject only, unlimited concurrency. false = the read/write endpoint only."
+  type        = bool
+  default     = true
+}
+
+# ---- data ----
+variable "force_destroy" {
+  description = "true = terraform destroy deletes the bucket WITH every database in it. false = destroy stops at a non-empty bucket and the data survives."
+  type        = bool
+  default     = true
 }

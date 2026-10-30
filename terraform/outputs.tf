@@ -4,8 +4,8 @@ output "db_url" {
 }
 
 output "db_ro_url" {
-  description = "Read-only endpoint: unlimited concurrency for read-heavy code (writes get 403)"
-  value       = aws_lambda_function_url.db["ro"].function_url
+  description = "Read-only endpoint: unlimited concurrency for read-heavy code (writes get 403); null with db_ro = false"
+  value       = var.db_ro ? aws_lambda_function_url.db["ro"].function_url : null
 }
 
 output "db_bucket" {

@@ -3,7 +3,7 @@
     python3 scripts/build_server.py "s3rds[server]==0.3.1"   -> terraform/.build/db/  (a release from PyPI)
     python3 scripts/build_server.py "./client[server]"       -> the same from this working tree (before a release)
 
-Terraform runs it itself at plan time with server_package. A path is relative to the repo root.
+Terraform runs it itself at plan time with "./client[server]" (terraform/main.tf). A path is relative to the repo root.
 Prints {"dir": "<path>"} for Terraform's external data source.
 """
 import glob

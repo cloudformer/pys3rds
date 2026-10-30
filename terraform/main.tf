@@ -2,22 +2,24 @@ data "aws_caller_identity" "me" {}
 
 locals {
   prefix = "db/" # fixed layout in every environment: s3://<bucket>/db/<db>.sqlite
-  role   = "${var.project_name}-lambda-role"
 
-  # the two endpoints run the same code:
+  # the endpoints run the same code, each with its own role:
   #   rw  the database, one writer globally (reserved concurrency 1; the ETag CAS in the code is the second guard)
-  #   ro  read-only (READONLY=1): not a replica, it reads the same S3 file, zero copy, zero lag; scales with demand
-  endpoints = {
-    rw = { function_name = "${var.project_name}-db-lambda", readonly = "0", concurrency = 1 }
-    ro = { function_name = "${var.project_name}-db-ro-lambda", readonly = "1", concurrency = -1 }
+  #   ro  read-only (READONLY=1): not a replica, it reads the same S3 file, zero copy, zero lag; scales with demand.
+  #       Only when db_ro = true; its role can read the databases and nothing else, so even a bug in the code
+  #       cannot write to S3 from it.
+  all_endpoints = {
+    rw = { function_name = "${var.project_name}-db-lambda", readonly = "0", concurrency = 1, s3 = ["s3:GetObject", "s3:PutObject"] }
+    ro = { function_name = "${var.project_name}-db-ro-lambda", readonly = "1", concurrency = -1, s3 = ["s3:GetObject"] }
   }
+  endpoints = { for k, e in local.all_endpoints : k => e if k == "rw" || var.db_ro }
 }
 
 # ---------------- S3: every database file lives in this one private bucket ----------------
 resource "aws_s3_bucket" "db" {
   # S3 bucket names are global; change the suffix if this one is taken
   bucket        = "${var.env}-srds-db-2026"
-  force_destroy = true # destroy deletes the data too; copy out anything you want to keep first
+  force_destroy = var.force_destroy # true: one-command destroy, data included; false: the databases survive a destroy
 }
 
 resource "aws_s3_bucket_public_access_block" "db" {
@@ -60,9 +62,11 @@ resource "aws_cloudwatch_log_group" "db" {
   retention_in_days = 14
 }
 
-# ---------------- IAM: one role, scoped to db/*.sqlite and the two log groups ----------------
+# ---------------- IAM: one role per endpoint, scoped to db/*.sqlite and its own log group ----------------
+# rw: GetObject + PutObject; ro: GetObject only. Both may list db/ (the console's database list).
 resource "aws_iam_role" "lambda" {
-  name = local.role
+  for_each = local.endpoints
+  name     = "${var.project_name}-${each.key}-lambda-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -74,19 +78,20 @@ resource "aws_iam_role" "lambda" {
 }
 
 resource "aws_iam_role_policy" "lambda" {
-  name = "${local.role}-policy"
-  role = aws_iam_role.lambda.id
+  for_each = local.endpoints
+  name     = "${var.project_name}-${each.key}-lambda-policy"
+  role     = aws_iam_role.lambda[each.key].id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
         Effect   = "Allow"
         Action   = ["logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = [for g in aws_cloudwatch_log_group.db : "${g.arn}:*"]
+        Resource = "${aws_cloudwatch_log_group.db[each.key].arn}:*"
       },
       {
         Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject"]
+        Action   = each.value.s3
         Resource = "${aws_s3_bucket.db.arn}/db/*.sqlite"
       },
       {
@@ -100,9 +105,11 @@ resource "aws_iam_role_policy" "lambda" {
 }
 
 # ---------------- packaging: the pip package s3rds[server] (s3rds.server + the pinned engine, Linux wheels) ----------------
-# scripts/build_server.py stages terraform/.build/db at plan time
+# scripts/build_server.py stages terraform/.build/db at plan time. This repo deploys its own working tree
+# (./client[server], relative to the repo root): what you test is what runs. Other projects pin a release instead,
+# e.g. "s3rds[server]==0.3.4".
 data "external" "db_build" {
-  program = ["python3", "${path.module}/../scripts/build_server.py", var.server_package]
+  program = ["python3", "${path.module}/../scripts/build_server.py", "./client[server]"]
 }
 
 data "archive_file" "db_code" {
@@ -115,7 +122,7 @@ data "archive_file" "db_code" {
 resource "aws_lambda_function" "db" {
   for_each         = local.endpoints
   function_name    = each.value.function_name
-  role             = aws_iam_role.lambda.arn
+  role             = aws_iam_role.lambda[each.key].arn
   runtime          = "python3.12"
   handler          = "s3rds.server.lambda_function.lambda_handler"
   filename         = data.archive_file.db_code.output_path
@@ -136,7 +143,7 @@ resource "aws_lambda_function" "db" {
     }
   }
 
-  depends_on = [aws_cloudwatch_log_group.db]
+  depends_on = [aws_cloudwatch_log_group.db, aws_iam_role_policy.lambda]
 }
 
 # ---------------- Function URLs ----------------
@@ -170,38 +177,4 @@ resource "aws_lambda_permission" "url_invoke" {
   function_name            = aws_lambda_function.db[each.key].function_name
   principal                = "*"
   invoked_via_function_url = true
-}
-
-# ---------------- renamed in 0.3.3 (rw / ro became one for_each): keep the deployed resources, URLs unchanged ----------------
-moved {
-  from = aws_lambda_function.db
-  to   = aws_lambda_function.db["rw"]
-}
-moved {
-  from = aws_lambda_function.db_ro
-  to   = aws_lambda_function.db["ro"]
-}
-moved {
-  from = aws_lambda_function_url.db
-  to   = aws_lambda_function_url.db["rw"]
-}
-moved {
-  from = aws_lambda_function_url.db_ro
-  to   = aws_lambda_function_url.db["ro"]
-}
-moved {
-  from = aws_lambda_permission.db_url[0]
-  to   = aws_lambda_permission.url["rw"]
-}
-moved {
-  from = aws_lambda_permission.db_ro_url[0]
-  to   = aws_lambda_permission.url["ro"]
-}
-moved {
-  from = aws_lambda_permission.db_url_invoke[0]
-  to   = aws_lambda_permission.url_invoke["rw"]
-}
-moved {
-  from = aws_lambda_permission.db_ro_url_invoke[0]
-  to   = aws_lambda_permission.url_invoke["ro"]
 }

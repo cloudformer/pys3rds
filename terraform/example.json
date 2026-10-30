@@ -11,5 +11,6 @@
   "console_auth_username": "admin",
   "console_auth_password": "CHANGE-ME",
 
-  "server_package": "s3rds[server]==0.3.3"
+  "db_ro": true,
+  "force_destroy": true
 }
