@@ -20,7 +20,7 @@ backwards (`import pymysql`, `import psycopg2`, `mysql+pymysql://`, `django.db.b
 ### The server: deploy once, ≈ $0 when idle
 
 You need an s3rds server in your own AWS account — a Lambda Function URL and an S3 bucket, nothing running
-while nobody uses it. Deploy it once with Terraform or CloudFormation from the
+while nobody uses it. Deploy it once with Terraform from the
 [main repository](https://github.com/cloudformer/s3rds#quick-start). Same as any driver needs its database.
 
 **Python drivers for [s3rds](https://github.com/cloudformer/s3rds) — a truly serverless RDS:

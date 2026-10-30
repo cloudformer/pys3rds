@@ -97,76 +97,43 @@ aws cloudformation deploy --template-file /tmp/s3rds.yaml --stack-name s3rds \
 
 ### 2. 打开控制台
 
-浏览器打开 `db_url`，用 `console_auth_username` / `console_auth_password` 登录。建库、建表（默认 STRICT）、加列、改行、跑 SQL。
-每次操作都显示服务端耗时，以及这次是命中 `/tmp` 缓存还是去了 S3。
+浏览器打开 `db_url`，用 `console_auth_username` / `console_auth_password` 登录：建库、建表、改行、跑 SQL。
+每次操作都显示服务端耗时，以及是命中 `/tmp` 缓存还是去了 S3。
+
+![s3rds 控制台](docs/console.jpg)
 
 ### 3. 程序连接
 
 ```bash
-pip install s3rds    # s3rds.sqlite、s3rds.pymysql / s3rds.psycopg2(MySQL / PostgreSQL 由 sqlglot 在客户端翻译)、SQLAlchemy 用的 sqlite+s3rds://、Django 用的 ENGINE s3rds.sqlite
+pip install s3rds
 ```
 
-想写哪种方言就 import 哪个，API 都是 pymysql 形状；将来上真 RDS 就是最后一次 `import pymysql`：
-
 ```python
-from s3rds import sqlite                            # SQLite 方言
-# from s3rds import pymysql                         # MySQL 方言(见下面「MySQL 方言」)
-# from s3rds import psycopg2                        # PostgreSQL 方言，psycopg2 的 API(见「PostgreSQL 方言」)
+from s3rds import sqlite       # SQLite 方言
+from s3rds import pymysql      # MySQL 方言             以后上 RDS：import pymysql
+from s3rds import psycopg2     # PostgreSQL 方言        以后：import psycopg2
 
-conn = sqlite.connect(host="xxxx.lambda-url.us-east-2.on.aws",
-                         user="admin", password="...", database="blog")
-
+conn = pymysql.connect(host="xxxx.lambda-url.us-east-2.on.aws", user="admin", password="...", database="blog")
 with conn.cursor() as cur:
-    cur.execute("INSERT INTO posts (title) VALUES (%s)", ["hello"])
-    print(cur.lastrowid)
-
-with conn.cursor(sqlite.cursors.DictCursor) as cur:
     cur.execute("SELECT * FROM posts WHERE id = %s", [1])
     print(cur.fetchall())
 
-conn.transaction([                                   # 全成或全败,一次 S3 写入
-    ("UPDATE stock SET qty = qty - 1 WHERE id = %s", [7]),
-    ("INSERT INTO orders (item) VALUES (%s)", [7]),
-])
-```
-
-**SQLAlchemy**（Core 和 ORM）：只换连接串。SQL 由 SQLAlchemy 自带的 SQLite 方言生成，不做任何翻译；
-底下的标准库 `sqlite3` 换成 `s3rds.sqlite`，事务行为和 sqlite3 一致（见[事务](#保证)）：
-
-```python
+# SQLAlchemy（Core / ORM）：只改 URL
 engine = create_engine("sqlite+s3rds://admin:...@xxxx.lambda-url.us-east-2.on.aws/blog")
-# 以后上 RDS:          "mysql+pymysql://admin:...@my-rds.amazonaws.com/blog"
+
+# Django：只改 ENGINE 和连接参数
+DATABASES = {"default": {"ENGINE": "s3rds.sqlite", "NAME": "blog",
+                         "HOST": "xxxx.lambda-url.us-east-2.on.aws", "USER": "admin", "PASSWORD": "..."}}
 ```
 
-本来就支持 SQLite（`DATABASE_URL=sqlite:///...`）的应用，代码不用改。
-
-**Django**：只换 `ENGINE` 和连接参数。SQL 由 Django 自带的 SQLite 后端生成；底下用 `s3rds.sqlite` 替换 `sqlite3`，
-`atomic()` 和 savepoint 就是驱动的打开事务，`migrate` 可用（重建表时连接会关掉外键，驱动把这个设置随每个请求发给服务端）：
-
-```python
-DATABASES = {"default": {
-    "ENGINE": "s3rds.sqlite",                       # 原来是 "django.db.backends.sqlite3"
-    "NAME": "blog", "HOST": "xxxx.lambda-url.us-east-2.on.aws", "USER": "admin", "PASSWORD": "...",
-}}
-# 以后上 RDS:  "ENGINE": "django.db.backends.mysql"，NAME / HOST / USER / PASSWORD 不变
-```
-
-先建一次数据库（控制台，或 `s3rds.sqlite.connect(...).create_database()`），再 `manage.py migrate`。
-`manage.py test` 请跑在 `django.db.backends.sqlite3` 上（同样的 SQL，本地文件）：在 s3rds 上建测试库会被拒绝。
-
-不可用：注册在连接上的 Python 函数（`create_function`、SQLAlchemy 的 `regexp_match`）——它们得跑在服务端。
-Django 的 SQLite 后端会注册约 35 个这样的函数：其中的日期函数（`__year`、`__date`、`Trunc`、`Extract`、`dates()`）
-这里改用 SQLite 自带的 `strftime()` 实现，并和原版逐项比对；其余的抛 `NotSupportedError`——查询里的时区转换
-（`TIME_ZONE` 保持和连接一致，默认 UTC）、`__regex`、`MD5` / `SHA*`、`LPad` / `RPad` / `Repeat` / `Reverse`、
-`order_by("?")`、`StdDev` / `Variance`、查询里的日期运算（`F("dt") + timedelta`、`F("end") - F("start")`）。
-
-只有一个依赖 sqlglot，只有 `s3rds.pymysql` 和 `s3rds.psycopg2` 用到。线协议就是 HTTPS + JSON，任何语言都能接：
+其他语言：就是 HTTPS + JSON。
 
 ```bash
-curl -s -u "admin:密码" -H "content-type: application/json" \
-     -d '{"sql":"SELECT * FROM posts WHERE id = ?","params":[1]}' \
-     "https://xxxx.lambda-url.us-east-2.on.aws/api/db/blog/query"
+curl -u admin:密码 -d '{"sql":"SELECT * FROM posts WHERE id = ?","params":[1]}' \
+     https://xxxx.lambda-url.us-east-2.on.aws/api/db/blog/query
 ```
+
+每种方言逐项支持情况：[tests/compat/REPORT.md](tests/compat/REPORT.md)。
 
 ## 兼容性
 
@@ -244,101 +211,35 @@ pip install pytest boto3
 pytest tests/ -v
 ```
 
-## MySQL 方言（`s3rds.pymysql`）
+## 方言
 
-写 MySQL，跑在同一个 endpoint 上。语句在客户端翻译（sqlglot，按语句缓存）：
+| 驱动 | 你写的 | 不支持（抛 `NotSupportedError`） |
+|---|---|---|
+| `s3rds.sqlite` | SQLite，不翻译；SQLAlchemy 和 Django 走它 | `create_function`（得在服务端执行） |
+| `s3rds.pymysql` | MySQL，在客户端由 sqlglot 翻译成 SQLite；类型和错误码同 pymysql | 存储过程、触发器、`FULLTEXT`、`FOR UPDATE`、`LOCK TABLES`、用户 |
+| `s3rds.psycopg2` | PostgreSQL，同样翻译；psycopg2 的 `extras` / `errors` / `extensions` | 函数、触发器、`LISTEN`、`COPY`、锁、序列、数组 |
 
-- `%s` / `%(name)s` 占位符、反引号、`LIMIT offset, count`
-- `AUTO_INCREMENT` → `INTEGER PRIMARY KEY AUTOINCREMENT`；`ENUM(...)` → `TEXT CHECK (...)`；`UNSIGNED` → 有符号；
-  文本列加 `COLLATE NOCASE`（模拟 MySQL 默认不区分大小写；`_bin` 排序规则保持区分）
-- 行内 `KEY` / `INDEX` / `UNIQUE KEY name (a, b)` 变成同一事务里的 `CREATE INDEX`
-  （存为 `table__name`，SHOW / DROP 时按 MySQL 的名字）
-- `INSERT IGNORE`、`ON DUPLICATE KEY UPDATE`（`VALUES(col)` → `excluded.col`）、`REPLACE INTO`、`INSERT … SELECT`、
-  `DEFAULT` 关键字、`UPDATE … JOIN`、`DELETE t FROM t JOIN …`、`TRUNCATE`、`RENAME TABLE`
-- `ALTER TABLE CHANGE a b` 改名；只改类型的 `MODIFY` / `CHANGE` 接受但不做事（SQLite 动态类型）
-- 函数：`DATE_ADD/SUB`、`YEAR … SECOND`、`DAYOFWEEK`、`DATEDIFF`、`TIMESTAMPDIFF`、`LPAD/RPAD`、`REPEAT`、
-  `SUBSTRING_INDEX`（count ±1）、`->` / `->>` / `JSON_UNQUOTE`、`UUID()`、`RAND()`、`LAST_INSERT_ID()`、`DATABASE()`
-- `SHOW TABLES / DATABASES / COLUMNS / CREATE TABLE / INDEX`、`DESCRIBE`、`information_schema.tables / columns`；
-  `USE db`、`SET NAMES / SESSION / sql_mode / time_zone` 接受为空操作
-- 报错是 pymysql 风格的异常类 + MySQL 错误码：1062 重复键、1146 表不存在、1054 列不存在、1064 语法……
-- `ENGINE=`、`CHARSET=`、`COMMENT`、`ON UPDATE CURRENT_TIMESTAMP` 会被丢弃
-
-不支持的——抛 `NotSupportedError`，绝不静默出错：存储过程/函数、触发器、`FULLTEXT`、
-`SELECT … FOR UPDATE`、`LOCK TABLES`、`GRANT`/用户管理。
-
-**适合谁：** 直接写 MySQL 的代码——pymysql 风格的调用、自己的数据访问层。ORM 走它自己的 SQLite 支持
-（SQLAlchemy 用 `sqlite+s3rds://`，Django 用 `ENGINE: "s3rds.sqlite"`，见[程序连接](#3-程序连接)）：走 MySQL 方言需要
-服务端会话，ORM 的 MySQL 方言连上就会探测 `SHOW VARIABLES`。需要在 MySQL 上用 ORM 的时候就是该迁 RDS 的时候——见 [MIGRATION.md](MIGRATION.md)。
-
-结果类型和 pymysql 一致：`DATETIME` → `datetime`、`DATE` → `date`、`TIME` → `timedelta`、`DECIMAL` /
-`SUM` / `AVG` / 整数除法 → `Decimal`、`BLOB` → `bytes`（双向）、`NOW()` → `datetime`。
-模拟严格模式：`'abc'` 插进 `INT` 列报 1366。`DESCRIBE` 和 `SHOW CREATE TABLE` 显示你声明的 MySQL 类型
-（存在库里一张小表 `_s3rds_columns`）。
-
-**兼容性报告 —— [tests/compat/REPORT.md](tests/compat/REPORT.md)。** 上面每一项能力对应一个测试：同一条 SQL
-在 Docker 里的真 MySQL 8.0 和 s3rds 上各跑一遍，比对结果、Python 类型、rowcount、lastrowid 和错误码。
-verified 的可以放心用；gap 的标了哪个任务来修。每次运行自动重新生成（命令见上面[兼容性](#兼容性)一节）。
-
-## PostgreSQL 方言（`s3rds.psycopg2`）
-
-用 psycopg2 的 API 写 PostgreSQL，跑在同一个 endpoint 上。和 MySQL 方言一样在客户端翻译（sqlglot，按语句缓存）。
-子模块和 psycopg2 同名：`s3rds.psycopg2.extras`（`RealDictCursor`、`DictCursor`、`Json`、`execute_values`）、
-`.errors`（`UniqueViolation` 等，带 `pgcode`）、`.extensions`。
-
-```python
-from s3rds import psycopg2                       # 以后：import psycopg2
-from s3rds.psycopg2.extras import RealDictCursor
-
-conn = psycopg2.connect(host="xxxx.lambda-url.us-east-2.on.aws", dbname="blog", user="admin", password="...")
-with conn, conn.cursor(cursor_factory=RealDictCursor) as cur:   # 和 psycopg2 一样 autocommit=False，`with conn` 提交
-    cur.execute("CREATE TABLE IF NOT EXISTS posts (id SERIAL PRIMARY KEY, title TEXT NOT NULL)")
-    cur.execute("INSERT INTO posts (title) VALUES (%s) RETURNING id", ["hello"])
-```
-
-- `%s` / `%(name)s`；`SERIAL` / `IDENTITY` 主键；`RETURNING`；`ON CONFLICT … DO UPDATE / DO NOTHING`；
-  `TRUNCATE … RESTART IDENTITY`；`BEGIN` / `START TRANSACTION` / `COMMIT` / `ROLLBACK`
-- `NUMERIC` → `Decimal`、`DATE` → `date`、`TIMESTAMP` → `datetime`；报错带 PostgreSQL 的 SQLSTATE（23505、42P01……）
-- 已知差距（任务 28、29）：`BOOLEAN` 返回 1 / 0、`LIKE` 不区分大小写、`x / 0` 得 NULL、
-  `::timestamp` / `::numeric` / `::text` 转换
-
-不支持的——抛 `NotSupportedError`（`errors.FeatureNotSupported`，0A000）：函数/触发器、`LISTEN` / `NOTIFY`、`COPY`、
-`SELECT … FOR UPDATE` / `LOCK`、角色/`GRANT`、序列、数组、扩展、临时表。对照 Docker 里的 PostgreSQL 16，
-结果见 [tests/compat/REPORT.md](tests/compat/REPORT.md)。
+每个功能都是一条对比 Docker 里真 MySQL 8.0 / PostgreSQL 16 的测试：[tests/compat/REPORT.md](tests/compat/REPORT.md)。
+要在 MySQL 上用 ORM？那就是该迁到 RDS 的时候了 —— [MIGRATION.md](MIGRATION.md)。
 
 ## 适用规模
 
-| 单库大小 | 结论 |
-|---|---|
-| **< 10 MB** | 甜点区：热读 20–50 ms，冷读/写 ~300 ms，无感知 |
-| **10–20 MB** | 设计极限：写几百 ms，手感仍流畅 |
-| **20–50 MB** | 能用，但每次写整文件回传（~1 s），写频繁会烦 |
-| **> 50 MB** | 换真 RDS，见 [MIGRATION.md](MIGRATION.md) |
-
-读不随大小退化（ETag 缓存），只有冷读和写要搬整个文件。写吞吐每秒几次。
-适合个人应用、内部工具、博客、MVP；不适合高并发 OLTP。
-
-`scripts/bench.py` 对你的部署测端到端延迟和吞吐，跑完自己清理。
+最好在 ~20 MB 以内：热读 20–50 ms，写几百 ms，每秒几次写。超过 ~50 MB 迁到 RDS。
+适合个人应用、内部工具、博客、MVP；不适合高并发 OLTP。`scripts/bench.py` 可以测你的部署。
 
 ## 目录
 
 ```
-client/           pip 包 s3rds:s3rds/sqlite/(驱动;base.py 是 Django 后端)、s3rds/pymysql.py、s3rds/psycopg2/、pyproject.toml
-                  s3rds/server/:数据库 Lambda(pip install "s3rds[server]"):lambda_function.py(HTTP API)、s3_sqlite.py(引擎)、index.html(控制台)
+client/           pip 包：s3rds/sqlite/、pymysql.py、psycopg2/（驱动），s3rds/server/（Lambda）
 terraform/        部署方式 A
 cloudformation/   部署方式 B
-tests/            正确性测试
-scripts/          bench.py
-MIGRATION.md      长大了怎么迁 RDS MySQL
+tests/            回归 + 兼容性
 ```
 
 ## 发版
 
-CI（`.github/workflows/test.yml`）每次 push 跑全部测试（含 MySQL 对比）。发版就是打 tag：
-
-```bash
-# 改 client/pyproject.toml 和 client/s3rds/sqlite/__init__.py 的版本号,写 CHANGELOG,提交,然后
-git tag v0.3.0 && git push --tags      # 测试 → 构建 client/ → 发 PyPI(trusted publishing,不用 token)
-```
+测试，改版本号（`client/pyproject.toml`、`__version__`、`terraform/example.json` 的 `server_package`），
+写 CHANGELOG，提交，`git tag vX.Y.Z && git push --tags` —— CI 测试、构建、发 PyPI。
 
 ## 路线图
 

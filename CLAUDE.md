@@ -51,9 +51,9 @@ s3rds (github.com/cloudformer/s3rds) is the reference implementation; when in do
    The same image is the first thing on the PyPI page: `client/README.md` embeds it right under the bold
    intro by absolute URL (`https://raw.githubusercontent.com/cloudformer/<project>/main/docs/architecture.svg`);
    PyPI cannot resolve relative paths.
-8. **Terraform first, every command from the repo root.** 0.1.0 ships Terraform only
-   (`terraform -chdir=terraform …`); CloudFormation is optional and comes later, producing the same
-   resources. `example.json` / `example-params.json` are committed, real variable files are gitignored. Least-privilege IAM. Destroy must work.
+8. **Terraform only, every command from the repo root** (`terraform -chdir=terraform …`). `cloudformation/`
+   holds only a README ("not supported yet"); a template comes back once the project is stable and someone
+   needs it — less to maintain. `example.json` is committed, real variable files are gitignored. Least-privilege IAM. Destroy must work.
 9. **Guarantees are stated and pinned by tests.** Atomicity, durability, isolation, retry policy ("fail
    rather than duplicate a write") each get one line in the README and a test.
 10. **Release = tag.** `git tag vX.Y.Z && git push --tags` runs tests, builds `client/`, publishes to PyPI via
@@ -103,7 +103,7 @@ s3rds (github.com/cloudformer/s3rds) is the reference implementation; when in do
 client/<project>/server/  the Lambda: lambda_function.py (shared helpers on top, routes below), index.html (console);
                   pip install "<project>[server]", handler <project>.server.lambda_function.lambda_handler
 client/<project>/ the pip package; pyproject.toml; README.md is the PyPI page
-terraform/ cloudformation/
+terraform/ cloudformation/ (README only: not supported yet)
 tests/            regression; tests/compat/ compatibility (conftest = harness, test_<ref>.py = feature list,
                   REPORT.md generated, TASKS.md numbered tasks), tests/compat_report.py (edit CONFIG only)
 .github/workflows test.yml (every push), publish.yml (tags)

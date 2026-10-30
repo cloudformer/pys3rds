@@ -12,7 +12,7 @@ The numbers [REPORT.md](REPORT.md) refers to in its gap notes.
 | 27 | Django test databases (`manage.py test` with ENGINE `s3rds.sqlite`): create / empty `test_<NAME>` through the driver; refused today |
 | 22 | `UPDATE` / `DELETE … ORDER BY LIMIT`: the server's SQLite (sqlean.py 3.50.4) is built without ENABLE_UPDATE_DELETE_LIMIT. Fix by translating to a subquery on the rowid. (`GROUP_CONCAT(… ORDER BY …)` works since the server ships SQLite 3.50.4.) |
 | 5 | `strict=True` connection option: refuse any statement the translator does not recognise instead of best-effort |
-| 19 | Lambda timeout 15 s → 30 s (terraform + CloudFormation) |
+| 19 | Lambda timeout 15 s → 30 s (terraform) |
 | 28 | `s3rds.psycopg2`: BOOLEAN as `bool` (columns and predicates; SQLite returns 1 / 0) |
 | 29 | `s3rds.psycopg2`: PostgreSQL semantics sqlglot does not give: case-sensitive `LIKE`, division by zero raises 22012, `::timestamp` / `::numeric` / `::text` casts; then `date_trunc` / `extract` / intervals, `information_schema`, `DELETE … USING` |
 

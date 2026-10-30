@@ -1,3 +1,0 @@
-# real parameter files hold passwords; only the example is committed
-*.json
-!example-params.json

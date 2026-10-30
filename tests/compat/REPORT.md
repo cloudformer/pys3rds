@@ -1,6 +1,6 @@
 # s3rds compatibility report · [tasks](TASKS.md)
 
-Generated 2026-10-29 by `pytest tests` · s3rds 0.3.1 · sqlglot 30.24.0 · Python 3.13.7
+Generated 2026-10-29 by `pytest tests` · s3rds 0.3.2 · sqlglot 30.24.0 · Python 3.13.7
 
 Each row is one feature exercised with the same SQL on the reference database and on s3rds; results, Python types, rowcount, lastrowid and error codes must match. The feature list only grows (a removed case would show in git), so the support percentage can only move up.
 

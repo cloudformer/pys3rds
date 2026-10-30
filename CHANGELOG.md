@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.2
+
+Console and docs. Server redeploy for the console.
+
+- CloudFormation removed: Terraform only until the project is stable (`cloudformation/README.md` says so).
+- README rewritten: overview, architecture flow, deployment, usage; details folded or linked.
+- Console: results in a proper grid — every column visible at once (long text wraps inside its cell, nothing cut
+  off), the page is wider (1440 px), a very wide or tall result scrolls inside its own frame with the header pinned,
+  SQL results get row numbers. Server redeploy.
+
 ## 0.3.1
 
 The server is in the pip package. Same server code; redeploy to switch the Lambdas to the packaged handler.

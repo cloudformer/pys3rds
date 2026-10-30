@@ -14,7 +14,7 @@ body {
   padding: 40px 20px;
 }
 .container {
-  max-width: 1200px;
+  max-width: 1440px;
   margin: 0 auto;
   background: white;
   border-radius: 15px;
@@ -92,19 +92,28 @@ h1 { color: #333; margin-bottom: 10px; }
   font-size: 16px; font-weight: 600; color: #4b5563; margin: 20px 0 10px 0;
   display: flex; align-items: center; gap: 10px;
 }
-table {
-  width: 100%; border-collapse: collapse; background: white;
-  border-radius: 8px; overflow: hidden; margin-bottom: 20px;
+/* result grid: every column visible at once (long text wraps inside its cell, nothing is cut off);
+   a very wide or tall result scrolls inside its own frame with the header pinned */
+.grid-wrap {
+  overflow: auto; max-height: 60vh; margin-bottom: 20px;
+  border: 1px solid #d1d5db; border-radius: 8px; background: white;
 }
+.grid-wrap::-webkit-scrollbar { width: 10px; height: 10px; }
+.grid-wrap::-webkit-scrollbar-thumb { background: #c4c9d2; border-radius: 5px; border: 2px solid white; }
+.grid-wrap::-webkit-scrollbar-corner { background: white; }
+table { min-width: 100%; border-collapse: separate; border-spacing: 0; background: white; }
 th {
-  background: #374151; color: white; padding: 12px; text-align: left;
-  font-weight: 600; font-size: 14px; white-space: nowrap;
+  position: sticky; top: 0; z-index: 1;
+  background: #374151; color: white; padding: 9px 12px; text-align: left;
+  font-weight: 600; font-size: 13px; white-space: nowrap;
 }
 td {
-  padding: 10px 12px; border-bottom: 1px solid #e5e7eb;
-  font-size: 14px; color: #374151; max-width: 420px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 7px 12px; border-bottom: 1px solid #eef0f3; border-right: 1px solid #f3f4f6;
+  font-size: 13px; color: #374151; max-width: 280px; font-variant-numeric: tabular-nums;
+  white-space: normal; overflow-wrap: anywhere; vertical-align: top; line-height: 1.45;
 }
+td.rownum, th.rownum { color: #9ca3af; text-align: right; min-width: 36px; background: #f9fafb; }
+th.rownum { background: #374151; color: #9ca3af; }
 tr:last-child td { border-bottom: none; }
 tr:hover td { background: #f9fafb; }
 td.null { color: #9ca3af; font-style: italic; }
@@ -198,7 +207,7 @@ dialog .form-grid { grid-template-columns: 1fr; }
       <button class="btn btn-ghost btn-small" id="togglelog">history</button>
     </div>
     <div class="log" id="log"></div>
-    <div id="sqlout" style="margin-top:12px" hidden><table id="sqlgrid"></table></div>
+    <div id="sqlout" class="grid-wrap" style="margin-top:12px" hidden><table id="sqlgrid"></table></div>
   </div>
 
   <div id="main"></div>
@@ -306,6 +315,11 @@ function rowsLine(d){ return `${d.rows.length} rows retrieved ${timing(d)}`; }
 function doneLine(d){ return `${d.rowcount >= 0 ? d.rowcount + ' rows affected' : 'completed'} ${timing(d)}`; }
 function esc(s){ return String(s).replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function cell(v){
+  if (v === null) return '<td class="null">NULL</td>';
+  const t = typeof v === 'object' ? JSON.stringify(v) : String(v);
+  return `<td title="${esc(t)}">${esc(t)}</td>`;
+}
 function sqlStr(v){ return v === null ? 'NULL' : "'" + String(v).replace(/'/g, "''") + "'"; }
 function friendly(m){
   if (/incomplete input/.test(m))
@@ -433,8 +447,7 @@ function render(){
   const dataHead = '<tr>' + state.columns.map(c => `<th>${esc(c)}</th>`).join('')
     + (hasRowid ? '<th>actions</th>' : '') + '</tr>';
   const dataRows = state.rows.map((r, i) =>
-    `<tr data-i="${i}">` + r.map(v => v === null
-      ? '<td class="null">NULL</td>' : `<td>${esc(v)}</td>`).join('')
+    `<tr data-i="${i}">` + r.map(cell).join('')
     + (hasRowid
       ? `<td style="white-space:nowrap"><button class="btn btn-ghost btn-small" onclick="editRow(${i})">edit</button>
          <button class="btn-danger" onclick="delRow(${i})">🗑 delete</button></td>` : '')
@@ -450,10 +463,10 @@ function render(){
     <div class="section-title">Structure
       <button class="btn btn-secondary btn-small" id="addcol">＋ Add column</button>
     </div>
-    <table>
+    <div class="grid-wrap"><table>
       <thead><tr><th>Field</th><th>Type</th><th>Null</th><th>Key</th><th>Default</th><th>Extra</th><th>actions</th></tr></thead>
       <tbody>${structRows}</tbody>
-    </table>
+    </table></div>
 
     <div class="add-form">
       <h3>➕ Insert a row into ${esc(state.table)}</h3>
@@ -467,7 +480,7 @@ function render(){
       ${state.ms !== undefined ? `<span class="hint">${state.ms} ms · ${state.s3}</span>` : ''}
     </div>
     ${state.rows.length
-      ? `<table id="grid"><thead>${dataHead}</thead><tbody>${dataRows}</tbody></table>`
+      ? `<div class="grid-wrap"><table id="grid"><thead>${dataHead}</thead><tbody>${dataRows}</tbody></table></div>`
       : '<div class="empty">No rows yet — insert the first one with the form above</div>'}
 
     <div class="pagination">
@@ -598,9 +611,8 @@ async function runSql(){
     const out = $('#sqlout'), t = $('#sqlgrid');
     if (d.columns.length){
       out.hidden = false;
-      t.innerHTML = '<thead><tr>' + d.columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr></thead><tbody>'
-        + d.rows.map(r => '<tr>' + r.map(v => v === null
-          ? '<td class="null">NULL</td>' : `<td>${esc(v)}</td>`).join('') + '</tr>').join('') + '</tbody>';
+      t.innerHTML = '<thead><tr><th class="rownum">#</th>' + d.columns.map(c => `<th>${esc(c)}</th>`).join('') + '</tr></thead><tbody>'
+        + d.rows.map((r, i) => `<tr><td class="rownum">${i + 1}</td>` + r.map(cell).join('') + '</tr>').join('') + '</tbody>';
       msg(rowsLine(d), true);
     } else {
       t.innerHTML = ''; out.hidden = true;
