@@ -6,7 +6,7 @@
 [![Compatibility](https://img.shields.io/badge/compatibility-report-blue)](tests/compat/REPORT.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-[English](README.md) · *Redefine Serverless* 系列 —— 闲时 ≈ $0 的 AWS 原语。
+[English](README.md) · **[IdleFree](https://cloudformer.github.io/#zh)** 系列 —— 闲时 ≈ $0 的 AWS 原语。
 
 ## 概述
 
@@ -195,25 +195,9 @@ Terraform 部署的是本仓库当前的代码（`./client[server]`），所以 
 `git tag vX.Y.Z && git push --tags`。
 待办：[tests/compat/TASKS.md](tests/compat/TASKS.md)。
 
-## Redefine Serverless 系列
+## IdleFree 系列
 
-那些"闲着也计费"的 AWS serverless 服务，用闲时 ≈ $0 的原语重做一遍。
-统一规则：项目名 = pip 包名 = import 名；子模块 = 它模仿的标准客户端名，切回真服务只改一行 import。
-
-| 替代 | 闲时底价 / 月 | 原语 | 项目 | 用法 | 状态 |
-|---|---|---|---|---|---|
-| RDS / Aurora Serverless | ~$14–45 | S3 + Lambda | **s3rds** | `from s3rds import pymysql` · `sqlite` · `psycopg2` | 本仓库 |
-| Redis / ElastiCache Serverless | ~$90 | DynamoDB | **pyredis** | `from pyredis import redis` | 下一个 |
-| Airflow / MWAA | ~$360 | Lambda + EventBridge + Step Functions | **lambdaflow** | `from lambdaflow import airflow` | 计划 |
-| Redshift Serverless | 一跑 ~$3/h | S3 + DuckDB | **s3shift** | `from s3shift import redshift_connector` | 计划 |
-| OpenSearch Serverless | ~$350 | S3 + SQLite FTS5（复用 s3rds） | **s3search** | `from s3search import opensearchpy` | 计划 |
-| Kafka / MSK Serverless | ~$550 | SQS | **sqskafka** | `from sqskafka import kafka` | 计划 |
-| DocumentDB（MongoDB） | ~$200 | SQLite JSON1（复用 s3rds） | **s3mongo** | `from s3mongo import pymongo` | 计划 |
-| Amazon MQ（RabbitMQ） | ~$20–50 | SQS | **sqsmq** | `from sqsmq import pika` | 计划 |
-
-顺带覆盖：MemoryDB（→ pyredis）、Kinesis Data Streams（→ sqskafka）、Timestream（→ s3shift）。
-
-共同原则：闲时 ≈ $0、无容器无实例、drop-in 标准接口、同一套测试跑真服务和重做版对照、MIT。
+**[IdleFree](https://cloudformer.github.io/#zh)** 系列之一 —— 把空闲也计费的 AWS 服务和自建应用，重建成空闲 ≈ $0。MIT。
 
 ## 协议
 

@@ -45,6 +45,7 @@ django = ["Django>=4.2,<6.2"]          # ENGINE "s3rds.sqlite"; CI runs 4.2 (Pyt
 
 [project.urls]
 Homepage = "https://github.com/cloudformer/s3rds"
+IdleFree = "https://cloudformer.github.io/"
 Repository = "https://github.com/cloudformer/s3rds"
 Deploy = "https://github.com/cloudformer/s3rds#quick-start"
 Compatibility = "https://github.com/cloudformer/s3rds/blob/main/tests/compat/REPORT.md"

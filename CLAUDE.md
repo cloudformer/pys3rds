@@ -1,6 +1,6 @@
 # s3rds — working notes for Claude
 
-This repository is one project of the **Redefine AWS Serverless** series (SERIES.md): an AWS service that
+This repository is one project of the **IdleFree** series (https://cloudformer.github.io; review notes in the template's SERIES.md): an AWS service that
 bills while idle, rebuilt on primitives that cost ≈ $0 when idle, behind the standard client's API.
 s3rds (github.com/cloudformer/s3rds) is the reference implementation; when in doubt, do what it does.
 
@@ -61,7 +61,9 @@ s3rds (github.com/cloudformer/s3rds) is the reference implementation; when in do
    trusted publishing; the tag must equal the version in `client/pyproject.toml`. CHANGELOG per release.
 11. **English everywhere except README.zh.md.** UI text, code, comments, commit messages, CHANGELOG, TASKS —
     all English; the only Chinese file is README.zh.md (same section order as README.md). The series footer
-    links to the topic page; the series table lives only in the template repository.
+    links to the homepage, https://cloudformer.github.io (README: "Part of IdleFree"; README.zh: #zh), and
+    `[project.urls]` carries `IdleFree = "https://cloudformer.github.io/"`. The project list lives only in the
+    homepage's projects.json; new repositories get the `idlefree` topic and the homepage as their website.
 12. **From 0.3.4 on, an upgrade never breaks a user.** The public surface — the pip extras (`mysql`, `postgres`,
     `server`, `sqlalchemy`, `django`), the import paths (`s3rds.sqlite`, `s3rds.pymysql`, `s3rds.psycopg2`,
     `s3rds.sqlite.base`, `s3rds.server.lambda_function.lambda_handler`), the SQLAlchemy URL `sqlite+s3rds://`, the

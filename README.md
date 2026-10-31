@@ -6,7 +6,7 @@
 [![Compatibility](https://img.shields.io/badge/compatibility-report-blue)](tests/compat/REPORT.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-[中文](README.zh.md) · Part of *Redefine Serverless* — AWS primitives that cost ≈ $0 when idle.
+[中文](README.zh.md) · Part of **[IdleFree](https://cloudformer.github.io/)** — AWS primitives that cost ≈ $0 when idle.
 
 ## Overview
 
@@ -199,27 +199,10 @@ Release: test, bump the version (`client/pyproject.toml`, `__version__`), CHANGE
 `git tag vX.Y.Z && git push --tags`.
 Open work: [tests/compat/TASKS.md](tests/compat/TASKS.md).
 
-## The Redefine Serverless series
+## Part of IdleFree
 
-AWS "serverless" services that still bill while idle, rebuilt on primitives that cost ≈ $0 when idle.
-Same rule everywhere: project = pip = import name; each submodule is named after the standard client
-it mirrors, so going back to the real service is one import line.
-
-| Replaces | Idle floor / month | Built on | Project | Usage | Status |
-|---|---|---|---|---|---|
-| RDS / Aurora Serverless | ~$14–45 | S3 + Lambda | **s3rds** | `from s3rds import pymysql` · `sqlite` · `psycopg2` | this repo |
-| Redis / ElastiCache Serverless | ~$90 | DynamoDB | **pyredis** | `from pyredis import redis` | next |
-| Airflow / MWAA | ~$360 | Lambda + EventBridge + Step Functions | **lambdaflow** | `from lambdaflow import airflow` | planned |
-| Redshift Serverless | ~$3/h once it wakes | S3 + DuckDB | **s3shift** | `from s3shift import redshift_connector` | planned |
-| OpenSearch Serverless | ~$350 | S3 + SQLite FTS5 (on s3rds) | **s3search** | `from s3search import opensearchpy` | planned |
-| Kafka / MSK Serverless | ~$550 | SQS | **sqskafka** | `from sqskafka import kafka` | planned |
-| DocumentDB (MongoDB) | ~$200 | SQLite JSON1 (on s3rds) | **s3mongo** | `from s3mongo import pymongo` | planned |
-| Amazon MQ (RabbitMQ) | ~$20–50 | SQS | **sqsmq** | `from sqsmq import pika` | planned |
-
-Also covered by the above: MemoryDB (→ pyredis), Kinesis Data Streams (→ sqskafka), Timestream (→ s3shift).
-
-Shared principles: ≈ $0 when idle, no container and no instance, drop-in standard interfaces,
-one test suite run against the real service and the rebuild, MIT.
+Part of **[IdleFree](https://cloudformer.github.io/)** — AWS services and self-hosted apps rebuilt to cost ≈ $0 when
+idle. MIT.
 
 ## License
 

@@ -123,3 +123,4 @@ What the report was verified with; the full report: [REPORT.md](https://github.c
 | Django | 4.2 (Python 3.9, 3.10), 5.2 (3.11, 3.12), 6.1 (3.12, 3.13), each in CI | extra `pip install "s3rds[django]"` = `Django>=4.2,<6.2` |
 | MySQL (reference) | 8.0.46 in Docker | `tests/compat/docker-compose.yml`: `mysql:8.0.46` |
 
+Part of [IdleFree](https://cloudformer.github.io/) — AWS services and self-hosted apps rebuilt to cost ≈ $0 when idle.
